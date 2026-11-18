@@ -19,7 +19,7 @@ const name = ref('')
 const email = ref('')
 const password = ref('')
 const confirmPassword = ref('')
-const rememberMe = ref(false)
+const rememberMe = ref(true)
 const passwordVisible = ref(false)
 const confirmVisible = ref(false)
 const recoveryCodeSent = ref(false)
@@ -337,7 +337,7 @@ async function submit() {
               <div v-if="!isRegister && !isForgot" class="auth-login-options">
                 <label class="remember-option">
                   <input v-model="rememberMe" type="checkbox" name="remember-me" />
-                  <span>Remember me</span>
+                  <span>Keep me signed in</span>
                 </label>
                 <RouterLink
                   class="forgot-password-link"

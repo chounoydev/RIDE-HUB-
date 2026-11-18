@@ -61,7 +61,7 @@ The public RideHub website is served by the same Vue application as the mobile t
 - `/auth?mode=register` creates a Neon Managed Auth account.
 - `/auth?mode=login` signs in to the shared RideHub account.
 - The Android/iOS app is sign-in only. Create and verify an account on the website, then sign in to the app with the same email and password. Both clients use the same Neon Auth project/branch and user records; users still sign in separately on each device.
-- The Android app requires sign-in again after a full app restart. Backgrounding and returning to the still-running app does not sign the rider out.
+- The website and mobile app remember the signed-in session across browser reloads and app restarts by default. Riders remain signed in until they choose Sign out; sessions may still end if they expire or are revoked by the auth provider.
 - **Forgot password?** on the login form sends a Neon Auth recovery code; enter it with a new password to restore account access.
 - `/verify-email` checks the emailed verification code. An email address is accepted only after the account owner can access its inbox; this confirms mailbox access, not legal identity.
 - `/admin` is restricted to users whose Neon Auth role is `admin`. The portal reads account records through Neon’s protected Admin API and does not provide role promotion.
