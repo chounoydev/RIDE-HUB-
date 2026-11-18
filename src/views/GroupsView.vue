@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { IonContent, IonIcon, IonPage } from '@ionic/vue'
+import { IonContent, IonIcon, IonPage, onIonViewWillEnter } from '@ionic/vue'
 import {
   addOutline,
+  checkmarkOutline,
   chevronForwardOutline,
+  closeOutline,
   locationOutline,
   peopleOutline,
+  refreshOutline,
   searchOutline,
   shieldCheckmarkOutline,
   timeOutline,
@@ -25,6 +28,12 @@ const meetingName = ref('')
 const meetingAddress = ref('')
 const meetingAt = ref('')
 const groupError = ref('')
+const creatingGroup = ref(false)
+const requestingGroupId = ref('')
+const resolvingRequestId = ref('')
+const reviewingRequestsId = ref<string | null>(null)
+
+onIonViewWillEnter(() => { void community.refresh() })
 
 const visibleGroups = computed(() => {
   const needle = query.value.trim().toLowerCase()
@@ -34,13 +43,21 @@ const visibleGroups = computed(() => {
   )
 })
 
-function createGroup() {
+async function createGroup() {
   if (!groupName.value.trim()) return
-  const group = community.createGroup(groupName.value, groupDescription.value)
-  groupName.value = ''
-  groupDescription.value = ''
-  showCreate.value = false
-  router.push({ path: '/tabs/messages', query: { group: group.id } })
+  creatingGroup.value = true
+  groupError.value = ''
+  try {
+    const group = await community.createGroup(groupName.value, groupDescription.value)
+    groupName.value = ''
+    groupDescription.value = ''
+    showCreate.value = false
+    await router.push({ path: '/tabs/messages', query: { group: group.id } })
+  } catch (reason) {
+    groupError.value = reason instanceof Error ? reason.message : 'Community could not be created.'
+  } finally {
+    creatingGroup.value = false
+  }
 }
 
 function openMeeting(group: CommunityGroup) {
@@ -71,23 +88,48 @@ async function saveMeeting(group: CommunityGroup) {
   } catch {
     // Preserve the saved coordinates if location is unavailable.
   }
-  community.setMeeting(group.id, {
-    name: meetingName.value.trim(),
-    address: meetingAddress.value.trim(),
-    latitude,
-    longitude,
-    meetingAt: meetingAt.value,
-  })
-  showMeeting.value = null
+  try {
+    await community.setMeeting(group.id, {
+      name: meetingName.value.trim(),
+      address: meetingAddress.value.trim(),
+      latitude,
+      longitude,
+      meetingAt: meetingAt.value,
+    })
+    groupError.value = ''
+    showMeeting.value = null
+  } catch (reason) {
+    groupError.value = reason instanceof Error ? reason.message : 'Meeting location could not be saved.'
+  }
 }
 
 function openChat(group: CommunityGroup) {
+  if (!community.isMember(group)) return
+  groupError.value = ''
+  void router.push({ path: '/tabs/messages', query: { group: group.id } })
+}
+
+async function requestToJoin(group: CommunityGroup) {
+  requestingGroupId.value = group.id
+  groupError.value = ''
   try {
-    community.joinGroup(group.id)
-    groupError.value = ''
-    router.push({ path: '/tabs/messages', query: { group: group.id } })
+    await community.joinGroup(group.id)
   } catch (reason) {
-    groupError.value = reason instanceof Error ? reason.message : 'Could not open this group.'
+    groupError.value = reason instanceof Error ? reason.message : 'Your join request could not be sent.'
+  } finally {
+    requestingGroupId.value = ''
+  }
+}
+
+async function resolveRequest(group: CommunityGroup, memberId: string, approve: boolean) {
+  resolvingRequestId.value = `${group.id}:${memberId}`
+  groupError.value = ''
+  try {
+    await community.resolveJoinRequest(group.id, memberId, approve)
+  } catch (reason) {
+    groupError.value = reason instanceof Error ? reason.message : 'The join request could not be updated.'
+  } finally {
+    resolvingRequestId.value = ''
   }
 }
 
@@ -107,10 +149,22 @@ function formatMeeting(meetingAt: string) {
           <div class="brand-lockup" aria-label="RideHub">
             <BrandLogo />
           </div>
-          <button class="community-create-button" type="button" @click="showCreate = true">
-            <ion-icon :icon="addOutline" />
-            <span>Create</span>
-          </button>
+          <div class="community-top-actions">
+            <button
+              class="community-refresh-button"
+              type="button"
+              :disabled="community.loading"
+              aria-label="Refresh communities"
+              @click="community.refresh()"
+            >
+              <ion-icon :icon="refreshOutline" />
+              <span>{{ community.loading ? 'Refreshing…' : 'Refresh' }}</span>
+            </button>
+            <button class="community-create-button" type="button" @click="showCreate = true">
+              <ion-icon :icon="addOutline" />
+              <span>Create</span>
+            </button>
+          </div>
         </header>
 
         <section class="page-header">
@@ -124,7 +178,13 @@ function formatMeeting(meetingAt: string) {
           <input v-model="query" type="search" placeholder="Search riding communities">
         </label>
 
-        <section v-if="community.groups.length === 0" class="empty-state community-empty">
+        <section v-if="community.loading && community.groups.length === 0" class="empty-state community-empty">
+          <span class="empty-icon"><ion-icon :icon="peopleOutline" /></span>
+          <h2>Loading communities</h2>
+          <p>Checking for rider groups and membership updates.</p>
+        </section>
+
+        <section v-else-if="community.groups.length === 0" class="empty-state community-empty">
           <span class="empty-icon"><ion-icon :icon="peopleOutline" /></span>
           <h2>Your crew starts here</h2>
           <p>Create a community, invite riders, and organize your next meetup.</p>
@@ -150,15 +210,18 @@ function formatMeeting(meetingAt: string) {
             <p>{{ group.description || 'A community for riders who enjoy the road together.' }}</p>
             <div class="community-card__meta">
               <span><ion-icon :icon="peopleOutline" /> {{ group.memberCount }} member{{ group.memberCount === 1 ? '' : 's' }}</span>
-              <span v-if="group.meeting"><ion-icon :icon="timeOutline" /> {{ formatMeeting(group.meeting.meetingAt) }}</span>
+              <span v-if="group.hasMeeting">
+                <ion-icon :icon="timeOutline" />
+                {{ community.isOwner(group) ? formatMeeting(group.meeting?.meetingAt ?? '') : 'Meeting planned' }}
+              </span>
             </div>
 
-            <div v-if="group.meeting" class="meeting-preview">
+            <div v-if="group.hasMeeting" class="meeting-preview">
               <ion-icon :icon="locationOutline" />
               <div>
                 <small>MEETING SPOT</small>
-                <strong>{{ community.isOwner(group) ? group.meeting.name : 'Shared by the group admin' }}</strong>
-                <span v-if="community.isOwner(group)">{{ group.meeting.address || 'Coordinates saved' }}</span>
+                <strong>{{ community.isOwner(group) ? group.meeting?.name : 'Shared by the group admin' }}</strong>
+                <span v-if="community.isOwner(group)">{{ group.meeting?.address || 'Coordinates saved' }}</span>
               </div>
             </div>
             <p v-else class="meeting-empty">Meeting location has not been set.</p>
@@ -171,13 +234,80 @@ function formatMeeting(meetingAt: string) {
                 @click="openMeeting(group)"
               >
                 <ion-icon :icon="locationOutline" />
-                {{ group.meeting ? 'Edit meeting' : 'Set meeting' }}
+                {{ group.hasMeeting ? 'Edit meeting' : 'Set meeting' }}
               </button>
-              <button class="primary-action" type="button" @click="openChat(group)">
-                Open group
-                <ion-icon :icon="chevronForwardOutline" />
+              <button
+                v-if="community.isOwner(group) && group.joinRequests?.length"
+                class="secondary-action"
+                type="button"
+                @click="reviewingRequestsId = reviewingRequestsId === group.id ? null : group.id"
+              >
+                Requests · {{ group.joinRequests.length }}
+              </button>
+              <button
+                v-if="community.isMember(group)"
+                class="primary-action"
+                type="button"
+                @click="openChat(group)"
+              >
+                Open group <ion-icon :icon="chevronForwardOutline" />
+              </button>
+              <button
+                v-else-if="group.membershipStatus === 'PENDING'"
+                class="secondary-action"
+                type="button"
+                disabled
+              >
+                Waiting for approval
+              </button>
+              <button
+                v-else-if="group.membershipStatus === 'BANNED'"
+                class="secondary-action"
+                type="button"
+                disabled
+              >
+                Unable to join
+              </button>
+              <button
+                v-else
+                class="primary-action"
+                type="button"
+                :disabled="requestingGroupId === group.id"
+                @click="requestToJoin(group)"
+              >
+                {{ requestingGroupId === group.id ? 'Sending…' : 'Request to join' }}
               </button>
             </div>
+            <section
+              v-if="reviewingRequestsId === group.id && community.isOwner(group)"
+              class="community-requests"
+              aria-label="Community join requests"
+            >
+              <h3>Join requests <span>{{ group.joinRequests?.length ?? 0 }}</span></h3>
+              <article v-for="request in group.joinRequests" :key="request.userId">
+                <div>
+                  <strong>{{ request.displayName }}</strong>
+                  <small>Waiting for admin approval</small>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Approve rider"
+                  :disabled="resolvingRequestId === `${group.id}:${request.userId}`"
+                  @click="resolveRequest(group, request.userId, true)"
+                >
+                  <ion-icon :icon="checkmarkOutline" />
+                </button>
+                <button
+                  class="community-request-reject"
+                  type="button"
+                  aria-label="Reject rider"
+                  :disabled="resolvingRequestId === `${group.id}:${request.userId}`"
+                  @click="resolveRequest(group, request.userId, false)"
+                >
+                  <ion-icon :icon="closeOutline" />
+                </button>
+              </article>
+            </section>
           </article>
         </section>
         <p v-if="community.storageError" class="community-admin-error" role="alert">{{ community.storageError }}</p>
@@ -196,7 +326,9 @@ function formatMeeting(meetingAt: string) {
               <span>Description</span>
               <textarea v-model="groupDescription" maxlength="240" rows="3" placeholder="What are you riding for?"></textarea>
             </label>
-            <button class="primary-action" type="submit" :disabled="!groupName.trim()">Create group</button>
+            <button class="primary-action" type="submit" :disabled="!groupName.trim() || creatingGroup">
+              {{ creatingGroup ? 'Creating…' : 'Create group' }}
+            </button>
           </form>
         </div>
 

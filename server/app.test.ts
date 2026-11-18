@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net'
 import { exportJWK, SignJWT } from 'jose'
 import { createNeonAuthTokenVerifier } from './avatar.js'
 import { createApp } from './app.js'
+import { CommunityError, type CommunityRepository } from './community.js'
 
 function responsePayload() {
   const nowEpoch = Math.floor(Date.now() / 3_600_000) * 3_600
@@ -151,6 +152,84 @@ test('reports background monitoring and push as inactive', async () => {
       monitoringActive: false,
       pushConfigured: false,
       avatarUploadConfigured: false,
+      sharedCommunitiesConfigured: false,
+    })
+  } finally {
+    await server.close()
+  }
+})
+
+test('requires a valid auth token before listing shared communities', async () => {
+  const requestedUsers: string[] = []
+  const communities: CommunityRepository = {
+    list: async (userId) => {
+      requestedUsers.push(userId)
+      return []
+    },
+    create: async () => { throw new Error('Not used by this test.') },
+    requestJoin: async () => { throw new Error('Not used by this test.') },
+    resolveJoinRequest: async () => { throw new Error('Not used by this test.') },
+    update: async () => { throw new Error('Not used by this test.') },
+    setMeeting: async () => { throw new Error('Not used by this test.') },
+    leave: async () => { throw new Error('Not used by this test.') },
+    delete: async () => { throw new Error('Not used by this test.') },
+    moderate: async () => { throw new Error('Not used by this test.') },
+  }
+  const server = await listen(createApp({
+    weatherApiKey: '',
+    verifyAuthToken: async (token) => token === 'valid-token' ? 'rider-1' : null,
+    communities,
+  }))
+
+  try {
+    const unauthenticated = await fetch(`${server.url}/api/communities`)
+    assert.equal(unauthenticated.status, 401)
+    assert.deepEqual(requestedUsers, [])
+
+    const response = await fetch(`${server.url}/api/communities`, {
+      headers: { Authorization: 'Bearer valid-token' },
+    })
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), [])
+    assert.deepEqual(requestedUsers, ['rider-1'])
+  } finally {
+    await server.close()
+  }
+})
+
+test('returns server-side community authorization errors to the caller', async () => {
+  const communities: CommunityRepository = {
+    list: async () => [],
+    create: async () => { throw new Error('Not used by this test.') },
+    requestJoin: async () => { throw new Error('Not used by this test.') },
+    resolveJoinRequest: async () => { throw new CommunityError(403, 'Only this community’s admin can perform that action.') },
+    update: async () => { throw new Error('Not used by this test.') },
+    setMeeting: async () => { throw new Error('Not used by this test.') },
+    leave: async () => { throw new Error('Not used by this test.') },
+    delete: async () => { throw new Error('Not used by this test.') },
+    moderate: async () => { throw new Error('Not used by this test.') },
+  }
+  const server = await listen(createApp({
+    weatherApiKey: '',
+    verifyAuthToken: async () => 'rider-2',
+    communities,
+  }))
+
+  try {
+    const response = await fetch(
+      `${server.url}/api/communities/00000000-0000-4000-8000-000000000001/requests/rider-3`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer valid-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ approve: true }),
+      },
+    )
+    assert.equal(response.status, 403)
+    assert.deepEqual(await response.json(), {
+      error: 'Only this community’s admin can perform that action.',
     })
   } finally {
     await server.close()

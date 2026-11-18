@@ -15,7 +15,7 @@ RideHub is an Android-first motorcycle community app built with Vue 3, Ionic Vue
 - 3D terrain/building map presentation with a 2D toggle. Motorcycle trips can request a Mapbox driving estimate; cross-user location sharing is not implemented.
 - Weather near the last Live Map location using a backend proxy to WeatherAPI.com; the forecast is cached on-device per signed-in account and refreshed when due or when the rider moves.
 - Private profile photo uploads for signed-in riders, stored in the branch's Neon Object Storage bucket.
-- Community prototype with group creation, device-local group chat and image sharing, admin branding and moderation controls (kick, ban, mute), and admin-only meeting-location UI. Community data is currently local to the browser/device and is not server-enforced or synchronized between riders.
+- Shared rider communities with server-persisted groups, admin-approved join requests, server-enforced admin settings and moderation (kick, ban, mute), and admin-only meeting details. Chat messages, images, and voice messages remain local to each device; the call UI is a local preview, not a live group call.
 - Official government warning feed (when available from the provider) and clearly labeled forecast-derived rain, thunderstorm, wind, and heat advisories.
 - In-app alert cards and pop-up toast, expiry filtering, duplicate/update suppression, and device-local category preferences/history.
 - Prisma schema and migration definitions for weather preferences, watched locations, alert history and delivery logs, plus emergency data tables.
@@ -48,8 +48,8 @@ The project includes a GitHub Actions workflow that runs the server tests and pr
 Set these Vercel environment variables before deploying:
 
 - Build/client: `VITE_MAPBOX_TOKEN` and `VITE_NEON_AUTH_URL`. Set the Auth URL to the Neon branch used by the deployment. `VITE_API_BASE_URL` is optional for the website (defaults to `/api`); Android defaults to the RideHub Vercel API. Set it to `https://<your-domain>/api` when building an APK for a different deployment. `VITE_ANDROID_DOWNLOAD_URL` and `VITE_IOS_DOWNLOAD_URL` are optional.
-- Server/runtime: `WEATHER_API_KEY`, `NEON_AUTH_BASE_URL`, and `NEON_AUTH_JWKS_URL`. Add `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, and `AWS_REGION` only when enabling profile photo uploads.
-- Do not add secrets to `VITE_` variables. `DATABASE_URL` and `DATABASE_URL_UNPOOLED` are not required by the deployed API; use them only for database tooling/migrations.
+- Server/runtime: `WEATHER_API_KEY`, `NEON_AUTH_BASE_URL`, `NEON_AUTH_JWKS_URL`, and the pooled Neon `DATABASE_URL` for shared communities. Add `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, and `AWS_REGION` only when enabling profile photo uploads.
+- Do not add secrets to `VITE_` variables. `DATABASE_URL_UNPOOLED` is only needed for database migrations; application requests use the pooled `DATABASE_URL`.
 
 The API allows same-origin web requests and the local/Capacitor origins, including Android's `https://localhost`; add other clients to `WEB_ORIGINS` as comma-separated origins. Add `https://localhost` to the Neon Auth trusted domains on the branch used by the APK. Vercel Functions limit request bodies to 4.5 MB, so profile photo uploads are capped at 4 MB. A deployment is only fully functional after its required provider credentials are configured. Rotate any credentials that have been shared in chat before adding replacement values to Vercel.
 
@@ -61,6 +61,7 @@ The public RideHub website is served by the same Vue application as the mobile t
 - `/auth?mode=register` creates a Neon Managed Auth account.
 - `/auth?mode=login` signs in to the shared RideHub account.
 - The Android/iOS app is sign-in only. Create and verify an account on the website, then sign in to the app with the same email and password. Both clients use the same Neon Auth project/branch and user records; users still sign in separately on each device.
+- The Android app requires sign-in again after a full app restart. Backgrounding and returning to the still-running app does not sign the rider out.
 - **Forgot password?** on the login form sends a Neon Auth recovery code; enter it with a new password to restore account access.
 - `/verify-email` checks the emailed verification code. An email address is accepted only after the account owner can access its inbox; this confirms mailbox access, not legal identity.
 - `/admin` is restricted to users whose Neon Auth role is `admin`. The portal reads account records through Neon’s protected Admin API and does not provide role promotion.
@@ -101,6 +102,7 @@ API endpoints:
 
 - `GET /api/health` — reports whether the provider is configured and whether background monitoring/push are active.
 - `GET /api/weather/forecast?lat=<latitude>&lon=<longitude>` — returns current conditions, the next 24 forecast hours, provider-issued warnings, and measured forecast advisories. Calls are rate-limited.
+- `/api/communities` — authenticated group discovery and creation, join requests and admin approvals, community settings, meeting details, membership, and moderation. The API verifies Neon Auth tokens and checks community ownership on the server.
 
 WeatherAPI's government-issued alerts are marked **Official warning**. Weather advisories derived from provider forecast measurements are marked **Forecast** and are not represented as government warnings. Flood and lightning alerts are shown only when the provider supplies an official alert with that hazard. Thresholds for forecast advisories are implemented in `server/weather.ts`.
 
@@ -127,7 +129,7 @@ npm run build
 
 Map search and routing require a working internet connection and Mapbox token with the required public API scopes. Route distance, duration, and steps come from Mapbox's driving profile; they are estimates, not motorcycle-specific navigation or guaranteed turn-by-turn guidance. The map can be switched between pitched 3D terrain/buildings and 2D. The GPS marker displays the signed-in user's name; it does not display other riders because cross-user location sharing is not implemented.
 
-The current API accepts only explicit latitude/longitude forecast requests. It does not expose a weather route planner or claim to monitor background conditions. Group membership, messages, logos, moderation, and meeting details are currently browser/device-local prototypes; server persistence, cross-device synchronization, and server-enforced admin authorization are not implemented. Community admins can optimize and update logos, set a chat theme color, and send voice messages up to one minute; voice recordings and other community content are stored on the current device only. Destinations and live trip locations remain on the device and are not shared with a group.
+The current API accepts only explicit latitude/longitude forecast requests. It does not expose a weather route planner or claim to monitor background conditions. Community groups, join requests, approved membership, admin settings, moderation, and meeting metadata are stored on the server; meeting coordinates are returned only to the community admin. Chat text, images, and voice messages are stored only on the current device and are not synchronized to other riders. Community admins can send voice messages up to one minute. The call UI is only a local preview, not a remote group call. Destinations and live trip locations remain on the device and are not shared with a group.
 
 ## Profile picture storage
 

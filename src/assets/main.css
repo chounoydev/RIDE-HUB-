@@ -2324,6 +2324,13 @@ body.ridehub-navigating .tab-bar {
   max-width: 980px;
 }
 
+.community-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.community-refresh-button,
 .community-create-button {
   display: inline-flex;
   min-height: 40px;
@@ -2337,6 +2344,20 @@ body.ridehub-navigating .tab-bar {
   cursor: pointer;
 }
 
+.community-refresh-button {
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: #b6c0c3;
+  background: #171e22;
+}
+
+.community-refresh-button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.community-refresh-button ion-icon,
 .community-create-button ion-icon {
   font-size: 18px;
 }
@@ -2520,6 +2541,82 @@ body.ridehub-navigating .tab-bar {
   flex: 1;
   justify-content: center;
   font-size: 11px;
+}
+
+.community-requests {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.community-requests h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 2px;
+  color: #dce2e1;
+  font: 600 12px 'Space Grotesk', sans-serif;
+}
+
+.community-requests h3 span {
+  color: #ffad70;
+  font: 700 10px 'DM Sans', sans-serif;
+}
+
+.community-requests article {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 11px;
+  background: #12191d;
+}
+
+.community-requests article div {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+
+.community-requests article strong {
+  overflow: hidden;
+  color: #edf0ed;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.community-requests article small {
+  color: #879398;
+  font-size: 8px;
+}
+
+.community-requests article button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(119, 190, 132, 0.2);
+  border-radius: 9px;
+  color: #a4d5a5;
+  background: rgba(119, 190, 132, 0.08);
+  cursor: pointer;
+}
+
+.community-requests article button:disabled {
+  opacity: 0.5;
+}
+
+.community-requests article .community-request-reject {
+  border-color: rgba(239, 83, 80, 0.22);
+  color: #ff9a8d;
+  background: rgba(239, 83, 80, 0.08);
 }
 
 .community-modal {

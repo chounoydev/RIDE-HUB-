@@ -7,6 +7,7 @@ import {
   type AvatarContentType,
   type AvatarStorage,
 } from './avatar.js'
+import { CommunityError, type CommunityRepository } from './community.js'
 import { fetchWeatherSnapshot, WeatherProviderError } from './weather.js'
 
 interface AppOptions {
@@ -14,8 +15,10 @@ interface AppOptions {
   allowedOrigins?: string[]
   trustProxy?: boolean
   fetchImpl?: typeof fetch
+  verifyAuthToken?: (token: string) => Promise<string | null>
   verifyAvatarToken?: (token: string) => Promise<string | null>
   avatarStorage?: AvatarStorage
+  communities?: CommunityRepository
 }
 
 export function createApp(options: AppOptions) {
@@ -41,6 +44,16 @@ export function createApp(options: AppOptions) {
       response.status(429).json({ error: 'Profile photo requests are temporarily rate limited. Try again shortly.' })
     },
   })
+  const communityLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 60,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    handler(_request, response) {
+      response.status(429).json({ error: 'Community requests are temporarily rate limited. Try again shortly.' })
+    },
+  })
+  const verifyAuthToken = options.verifyAuthToken ?? options.verifyAvatarToken
   const allowedOrigins = new Set([
     'capacitor://localhost',
     'https://localhost',
@@ -60,7 +73,7 @@ export function createApp(options: AppOptions) {
   app.use(cors((request, callback) => {
     callback(null, { origin: Boolean(request.get('origin')) })
   }))
-  app.use(express.json({ limit: '32kb' }))
+  app.use(express.json({ limit: '1mb' }))
 
   app.get('/api/health', (_request, response) => {
     response.json({
@@ -68,12 +81,126 @@ export function createApp(options: AppOptions) {
       weatherConfigured: options.weatherApiKey.length > 0,
       monitoringActive: false,
       pushConfigured: false,
-      avatarUploadConfigured: Boolean(options.verifyAvatarToken && options.avatarStorage),
+      avatarUploadConfigured: Boolean(verifyAuthToken && options.avatarStorage),
+      sharedCommunitiesConfigured: Boolean(verifyAuthToken && options.communities),
     })
   })
 
+  const authenticateCommunityRequest: express.RequestHandler = async (request, response, next) => {
+    if (!verifyAuthToken) {
+      response.status(503).json({
+        error: 'Shared communities require NEON_AUTH_BASE_URL and NEON_AUTH_JWKS_URL on the backend.',
+      })
+      return
+    }
+
+    const match = /^Bearer\s+(\S+)$/i.exec(request.get('authorization') ?? '')
+    if (!match) {
+      response.status(401).json({ error: 'Sign in to browse or manage communities.' })
+      return
+    }
+
+    try {
+      const userId = await verifyAuthToken(match[1]!)
+      if (!userId) {
+        response.status(401).json({ error: 'Your session is invalid or expired. Sign in again and retry.' })
+        return
+      }
+      response.locals.communityUserId = userId
+      next()
+    } catch (reason) {
+      console.error('Could not verify community request:', reason)
+      response.status(503).json({ error: 'RideHub could not verify your session. Please retry shortly.' })
+    }
+  }
+
+  const requireCommunityRepository: express.RequestHandler = (_request, response, next) => {
+    if (!options.communities) {
+      response.status(503).json({
+        error: 'Shared communities are not configured. Set DATABASE_URL on the backend and apply the database migrations.',
+      })
+      return
+    }
+    next()
+  }
+
+  app.get('/api/communities', communityLimiter, authenticateCommunityRequest, requireCommunityRepository, async (_request, response) => {
+    response.setHeader('Cache-Control', 'no-store')
+    response.json(await options.communities!.list(getCommunityUserId(response)))
+  })
+
+  app.post('/api/communities', communityLimiter, authenticateCommunityRequest, requireCommunityRepository, async (request, response) => {
+    const community = await options.communities!.create(
+      getCommunityUserId(response),
+      request.body,
+    )
+    response.status(201).json(community)
+  })
+
+  app.post('/api/communities/:communityId/join', communityLimiter, authenticateCommunityRequest, requireCommunityRepository, async (request, response) => {
+    const community = await options.communities!.requestJoin(
+      getRouteParam(request.params.communityId),
+      getCommunityUserId(response),
+      request.body,
+    )
+    response.json(community)
+  })
+
+  app.post('/api/communities/:communityId/requests/:memberId', communityLimiter, authenticateCommunityRequest, requireCommunityRepository, async (request, response) => {
+    const community = await options.communities!.resolveJoinRequest(
+      getRouteParam(request.params.communityId),
+      getCommunityUserId(response),
+      getRouteParam(request.params.memberId),
+      request.body,
+    )
+    response.json(community)
+  })
+
+  app.patch('/api/communities/:communityId', communityLimiter, authenticateCommunityRequest, requireCommunityRepository, async (request, response) => {
+    const community = await options.communities!.update(
+      getRouteParam(request.params.communityId),
+      getCommunityUserId(response),
+      request.body,
+    )
+    response.json(community)
+  })
+
+  app.put('/api/communities/:communityId/meeting', communityLimiter, authenticateCommunityRequest, requireCommunityRepository, async (request, response) => {
+    const community = await options.communities!.setMeeting(
+      getRouteParam(request.params.communityId),
+      getCommunityUserId(response),
+      request.body,
+    )
+    response.json(community)
+  })
+
+  app.post('/api/communities/:communityId/leave', communityLimiter, authenticateCommunityRequest, requireCommunityRepository, async (request, response) => {
+    await options.communities!.leave(
+      getRouteParam(request.params.communityId),
+      getCommunityUserId(response),
+    )
+    response.status(204).end()
+  })
+
+  app.delete('/api/communities/:communityId', communityLimiter, authenticateCommunityRequest, requireCommunityRepository, async (request, response) => {
+    await options.communities!.delete(
+      getRouteParam(request.params.communityId),
+      getCommunityUserId(response),
+    )
+    response.status(204).end()
+  })
+
+  app.post('/api/communities/:communityId/moderation', communityLimiter, authenticateCommunityRequest, requireCommunityRepository, async (request, response) => {
+    const community = await options.communities!.moderate(
+      getRouteParam(request.params.communityId),
+      getCommunityUserId(response),
+      request.body,
+    )
+    response.json(community)
+  })
+
   const authenticateAvatarRequest: express.RequestHandler = async (request, response, next) => {
-    if (!options.verifyAvatarToken) {
+    if (!verifyAuthToken) {
       response.status(503).json({
         error: 'Profile picture uploads require NEON_AUTH_BASE_URL and NEON_AUTH_JWKS_URL on the backend.',
       })
@@ -87,7 +214,7 @@ export function createApp(options: AppOptions) {
     }
 
     try {
-      const userId = await options.verifyAvatarToken(match[1]!)
+      const userId = await verifyAuthToken(match[1]!)
       if (!userId) {
         response.status(401).json({ error: 'Your session is invalid or expired. Sign in again and retry.' })
         return
@@ -255,7 +382,15 @@ export function createApp(options: AppOptions) {
       && 'type' in error
       && error.type === 'entity.too.large'
     ) {
-      response.status(413).json({ error: 'Profile pictures must be 4 MB or smaller.' })
+      response.status(413).json({
+        error: _request.path === '/api/profile/avatar'
+          ? 'Profile pictures must be 4 MB or smaller.'
+          : 'The request body is too large.',
+      })
+      return
+    }
+    if (error instanceof CommunityError) {
+      response.status(error.statusCode).json({ error: error.message })
       return
     }
     console.error('Unhandled API error:', error)
@@ -267,6 +402,19 @@ export function createApp(options: AppOptions) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function getCommunityUserId(response: express.Response): string {
+  const userId = response.locals.communityUserId
+  if (typeof userId !== 'string') {
+    throw new CommunityError(401, 'Sign in to browse or manage communities.')
+  }
+  return userId
+}
+
+function getRouteParam(value: string | string[] | undefined): string {
+  if (typeof value !== 'string') throw new CommunityError(400, 'A valid community request path is required.')
+  return value
 }
 
 function isSameOrigin(origin: string, request: express.Request): boolean {

@@ -1,5 +1,7 @@
 import { createAvatarStorage, createNeonAuthTokenVerifier } from './avatar.js'
 import { createApp } from './app.js'
+import { PrismaCommunityRepository } from './community.js'
+import { getDatabaseClient } from './db.js'
 
 export function createConfiguredApp(env: NodeJS.ProcessEnv = process.env) {
   const allowedOrigins = (env.WEB_ORIGINS ?? '')
@@ -9,9 +11,11 @@ export function createConfiguredApp(env: NodeJS.ProcessEnv = process.env) {
 
   const authBaseUrl = env.NEON_AUTH_BASE_URL?.trim() ?? ''
   const authJwksUrl = env.NEON_AUTH_JWKS_URL?.trim() ?? ''
-  const verifyAvatarToken = authBaseUrl && authJwksUrl
+  const verifyAuthToken = authBaseUrl && authJwksUrl
     ? createNeonAuthTokenVerifier(authJwksUrl, authBaseUrl)
     : undefined
+  const database = getDatabaseClient(env)
+  const communities = database ? new PrismaCommunityRepository(database) : undefined
 
   const storageEnvironment = {
     accessKeyId: env.AWS_ACCESS_KEY_ID?.trim() ?? '',
@@ -35,8 +39,11 @@ export function createConfiguredApp(env: NodeJS.ProcessEnv = process.env) {
       })
     : undefined
 
-  if (!verifyAvatarToken) {
-    console.warn('Profile photo uploads are disabled until NEON_AUTH_BASE_URL and NEON_AUTH_JWKS_URL are configured.')
+  if (!verifyAuthToken) {
+    console.warn('Authenticated API features are disabled until NEON_AUTH_BASE_URL and NEON_AUTH_JWKS_URL are configured.')
+  }
+  if (!database) {
+    console.warn('Shared communities are disabled until DATABASE_URL is configured.')
   }
   if (!avatarStorageConfigured) {
     console.warn('Profile photo uploads are disabled until Neon Object Storage credentials are configured.')
@@ -46,7 +53,8 @@ export function createConfiguredApp(env: NodeJS.ProcessEnv = process.env) {
     weatherApiKey: env.WEATHER_API_KEY?.trim() ?? '',
     allowedOrigins,
     trustProxy: env.VERCEL === '1',
-    verifyAvatarToken,
+    verifyAuthToken,
     avatarStorage,
+    communities,
   })
 }

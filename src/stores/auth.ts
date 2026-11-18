@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { authConfigured, getAuthClient, type AuthUser } from '@/services/auth'
+import { authConfigured, getAuthClient, isNativeApp, type AuthUser } from '@/services/auth'
 import { clearUserLocationData } from '@/services/location-persistence'
 
 const pendingEmailKey = 'ridehub.pending-verification-email'
@@ -26,6 +26,34 @@ export const useAuthStore = defineStore('auth', () => {
     return user.value
   }
 
+  async function clearNativeStartupSession() {
+    let previousUserId = ''
+    try {
+      const session = await getAuthClient().getSession()
+      if (session.error) throw session.error
+      previousUserId = session.data?.user?.id ?? ''
+    } catch (reason) {
+      console.error('Unable to inspect the saved native session at app startup.', reason)
+    }
+
+    try {
+      const response = await getAuthClient().signOut()
+      if (response.error) throw response.error
+    } catch (reason) {
+      console.error('Unable to clear the saved native session at app startup.', reason)
+    }
+
+    if (previousUserId) {
+      try {
+        clearUserLocationData(previousUserId)
+      } catch (reason) {
+        console.error('Unable to clear saved location data during native startup logout.', reason)
+      }
+    }
+    user.value = null
+    initialized.value = true
+  }
+
   async function initialize() {
     if (initialized.value) return
     if (!authConfigured) {
@@ -37,7 +65,11 @@ export const useAuthStore = defineStore('auth', () => {
     initialization = (async () => {
       loading.value = true
       try {
-        await refreshSession()
+        if (isNativeApp) {
+          await clearNativeStartupSession()
+        } else {
+          await refreshSession()
+        }
       } finally {
         loading.value = false
         initialization = null

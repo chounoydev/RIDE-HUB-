@@ -117,6 +117,13 @@ enum EmergencyNotificationStatus {
   ACKNOWLEDGED
 }
 
+enum CommunityMembershipStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  BANNED
+}
+
 model User {
   id              String   @id @default(uuid()) @db.Uuid
   email           String   @unique @db.VarChar(320)
@@ -431,4 +438,35 @@ model EmergencyAcknowledgement {
 
   @@unique([incidentId, userId])
   @@index([userId, acknowledgedAt(sort: Desc)])
+}
+
+model Community {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(60)
+  description String   @db.VarChar(240)
+  ownerId     String   @db.VarChar(128)
+  ownerName   String   @db.VarChar(80)
+  logoDataUrl String?  @db.Text
+  themeColor  String   @default("#ff7a1a") @db.VarChar(7)
+  meeting     Json?
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  members     CommunityMembership[]
+
+  @@index([createdAt(sort: Desc)])
+}
+
+model CommunityMembership {
+  communityId String                    @db.Uuid
+  userId      String                    @db.VarChar(128)
+  displayName String                    @db.VarChar(80)
+  status      CommunityMembershipStatus @default(PENDING)
+  isMuted     Boolean                   @default(false)
+  createdAt   DateTime                  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime                  @updatedAt @db.Timestamptz(3)
+  approvedAt  DateTime?                 @db.Timestamptz(3)
+  community   Community                 @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@id([communityId, userId])
+  @@index([communityId, status])
+  @@index([userId, status])
 }

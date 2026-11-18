@@ -59,6 +59,23 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to) => {
+  if (isNativeApp) {
+    const auth = useAuthStore()
+    try {
+      await auth.initialize()
+    } catch {
+      return { path: '/auth', query: { mode: 'login', redirect: to.fullPath, reason: 'session' } }
+    }
+
+    if (to.path === '/') {
+      return auth.user ? '/tabs/home' : { path: '/auth', query: { mode: 'login' } }
+    }
+    if (!auth.user && to.path !== '/auth') {
+      return { path: '/auth', query: { mode: 'login', redirect: to.fullPath } }
+    }
+    if (auth.user && to.path === '/auth') return '/tabs/home'
+  }
+
   if (isNativeApp && to.path === '/auth' && to.query.mode === 'register') {
     return {
       path: '/auth',

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { IonContent, IonIcon, IonPage } from '@ionic/vue'
+import { IonContent, IonIcon, IonPage, onIonViewWillEnter } from '@ionic/vue'
 import {
   callOutline,
   chevronBackOutline,
@@ -51,6 +51,8 @@ let mediaRecorder: MediaRecorder | null = null
 let recordingChunks: Blob[] = []
 let recordingTimer: number | undefined
 let discardRecording = false
+
+onIonViewWillEnter(() => { void community.refresh() })
 
 watch([settingsName, settingsDescription, settingsThemeColor], () => {
   adminSaved.value = false
@@ -294,12 +296,12 @@ function endCall() {
   callError.value = ''
 }
 
-function leaveCurrentGroup() {
+async function leaveCurrentGroup() {
   const group = activeGroup.value
   if (!group || community.isOwner(group)) return
   if (!window.confirm(`Leave ${group.name}? You can rejoin later unless the admin bans you.`)) return
   try {
-    community.leaveGroup(group.id)
+    await community.leaveGroup(group.id)
     activeGroupId.value = ''
     messageError.value = ''
     void router.replace('/tabs/messages')
@@ -308,12 +310,12 @@ function leaveCurrentGroup() {
   }
 }
 
-function deleteCurrentGroup() {
+async function deleteCurrentGroup() {
   const group = activeGroup.value
   if (!group || !community.isOwner(group)) return
   if (!window.confirm(`Delete “${group.name}” and its saved messages from this device? This cannot be undone.`)) return
   try {
-    community.deleteGroup(group.id)
+    await community.deleteGroup(group.id)
     adminPanelOpen.value = false
     activeGroupId.value = ''
     void router.replace('/tabs/messages')
@@ -332,7 +334,7 @@ function openAdminPanel() {
   adminPanelOpen.value = true
 }
 
-function saveGroupSettings() {
+async function saveGroupSettings() {
   if (!activeGroup.value) return
   if (!settingsName.value.trim()) {
     adminError.value = 'Enter a community name before saving.'
@@ -340,16 +342,11 @@ function saveGroupSettings() {
     return
   }
   try {
-    community.updateGroup(activeGroup.value.id, {
+    await community.updateGroup(activeGroup.value.id, {
       name: settingsName.value,
       description: settingsDescription.value,
       themeColor: settingsThemeColor.value,
     })
-    if (community.storageError) {
-      adminError.value = community.storageError
-      adminSaved.value = false
-      return
-    }
     settingsName.value = activeGroup.value.name
     settingsDescription.value = activeGroup.value.description
     settingsThemeColor.value = activeGroup.value.themeColor ?? '#ff7a1a'
@@ -373,7 +370,7 @@ async function setGroupLogo(event: Event) {
   logoSaving.value = true
   try {
     const dataUrl = await optimizeLogo(file)
-    community.updateGroup(activeGroup.value.id, { logoDataUrl: dataUrl })
+    await community.updateGroup(activeGroup.value.id, { logoDataUrl: dataUrl })
     adminError.value = ''
   } catch (reason) {
     adminError.value = reason instanceof Error ? reason.message : 'Logo could not be saved.'
@@ -383,12 +380,17 @@ async function setGroupLogo(event: Event) {
   }
 }
 
-function clearGroupLogo() {
+async function clearGroupLogo() {
   if (!activeGroup.value) return
-  community.updateGroup(activeGroup.value.id, { logoDataUrl: null })
+  try {
+    await community.updateGroup(activeGroup.value.id, { logoDataUrl: null })
+    adminError.value = ''
+  } catch (reason) {
+    adminError.value = reason instanceof Error ? reason.message : 'Community logo could not be removed.'
+  }
 }
 
-function moderateMember(memberId: string, action: 'kick' | 'ban' | 'mute' | 'unmute' | 'unban') {
+async function moderateMember(memberId: string, action: 'kick' | 'ban' | 'mute' | 'unmute' | 'unban') {
   if (!activeGroup.value) return
   const name = activeGroup.value.memberNames?.[memberId] ?? 'this rider'
   const confirmation = action === 'ban'
@@ -398,7 +400,7 @@ function moderateMember(memberId: string, action: 'kick' | 'ban' | 'mute' | 'unm
       : ''
   if (confirmation && !window.confirm(confirmation)) return
   try {
-    community.moderateMember(activeGroup.value.id, memberId, action)
+    await community.moderateMember(activeGroup.value.id, memberId, action)
     adminError.value = ''
   } catch (reason) {
     adminError.value = reason instanceof Error ? reason.message : 'Member action could not be completed.'
@@ -485,7 +487,7 @@ onBeforeUnmount(() => {
 
         <section
           v-if="activeGroup"
-          :class="['chat-conversation', { 'chat-conversation--meeting': activeGroup.meeting }]"
+          :class="['chat-conversation', { 'chat-conversation--meeting': activeGroup.hasMeeting }]"
           :style="{ '--community-accent': activeGroup.themeColor ?? '#ff7a1a' }"
         >
           <header class="chat-header">
@@ -522,12 +524,12 @@ onBeforeUnmount(() => {
             </button>
           </header>
 
-          <div v-if="activeGroup.meeting" class="chat-meeting">
+          <div v-if="activeGroup.hasMeeting" class="chat-meeting">
             <ion-icon :icon="locationOutline" />
             <div v-if="community.isOwner(activeGroup)">
               <small>MEETING LOCATION · ADMIN ONLY</small>
-              <strong>{{ activeGroup.meeting.name }}</strong>
-              <span>{{ activeGroup.meeting.address }}</span>
+              <strong>{{ activeGroup.meeting?.name }}</strong>
+              <span>{{ activeGroup.meeting?.address }}</span>
             </div>
             <div v-else>
               <small>GROUP MEET-UP</small>
@@ -634,7 +636,7 @@ onBeforeUnmount(() => {
             </span>
           </label>
           <button class="primary-action community-admin-save" type="button" @click="saveGroupSettings">Save changes</button>
-          <p v-if="adminSaved" class="community-admin-success" role="status">Changes saved on this device.</p>
+          <p v-if="adminSaved" class="community-admin-success" role="status">Changes saved for this community.</p>
 
           <div class="community-admin-members">
             <div class="community-admin-members__heading">
@@ -700,7 +702,7 @@ onBeforeUnmount(() => {
               Delete
             </button>
           </div>
-          <p class="community-admin-note">Changes are saved on this device only and are not yet synced to other riders.</p>
+          <p class="community-admin-note">Community settings and moderation are shared with riders. Chat messages stay on this device.</p>
         </section>
       </div>
 
