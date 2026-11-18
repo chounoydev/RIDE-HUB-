@@ -6,7 +6,7 @@ RideHub is an Android-first motorcycle community app built with Vue 3, Ionic Vue
 
 - Ionic Vue mobile shell with Home, Live Map, Groups, Messages, and Profile tabs.
 - Responsive RideHub marketing site with purpose/feature information and account entry points.
-- Website-only Neon Managed Auth signup, plus shared email/password sign-in and emailed-code password recovery on web and mobile, with mandatory email verification and password visibility controls.
+- Neon Managed Auth signup and shared email/password sign-in on web and Android, plus emailed-code password recovery, with mandatory email verification and password visibility controls.
 - Admin-only account portal backed by Neon’s authenticated Admin API; users cannot self-promote.
 - The website includes a direct download link and QR code for the signed Android APK; the iOS card is reserved for a TestFlight invitation and stays unavailable until a native iOS build is published.
 - Foreground GPS lookup and explicit live trip tracking after a user action; the last GPS fix is saved on-device per signed-in account and cleared at sign-out. Tracking stops when the map is left or the app is backgrounded. No location sharing or background GPS.
@@ -15,10 +15,10 @@ RideHub is an Android-first motorcycle community app built with Vue 3, Ionic Vue
 - 3D terrain/building map presentation with a 2D toggle. Motorcycle trips can request a Mapbox driving estimate; cross-user location sharing is not implemented.
 - Weather near the last Live Map location using a backend proxy to WeatherAPI.com; the forecast is cached on-device per signed-in account and refreshed when due or when the rider moves.
 - Private profile photo uploads for signed-in riders, stored in the branch's Neon Object Storage bucket.
-- Shared rider communities with server-persisted groups, admin-approved join requests, server-enforced admin settings and moderation (kick, ban, mute), and admin-only meeting details. Chat messages, images, and voice messages remain local to each device; the call UI is a local preview, not a live group call.
+- Shared rider communities with server-persisted groups, admin-approved join requests, server-enforced admin settings and moderation (kick, ban, mute), and admin-only meeting details. Approved members share persisted text, image, and recorded voice messages; updates synchronize every two seconds, authors can edit or unsend their messages, and admins can remove messages. Messages saved by older app versions remain on their original device and are labeled as local-only. Live group voice calls use WebRTC audio with authenticated, database-backed signaling and public STUN for NAT discovery (STUN providers can observe network addresses); no TURN relay is configured, so some networks may not connect.
 - Official government warning feed (when available from the provider) and clearly labeled forecast-derived rain, thunderstorm, wind, and heat advisories.
 - In-app alert cards and pop-up toast, expiry filtering, duplicate/update suppression, and device-local category preferences/history.
-- Prisma schema and migration definitions for weather preferences, watched locations, alert history and delivery logs, plus emergency data tables.
+- Prisma schema and migration definitions for weather preferences, watched locations, alert history and delivery logs, emergency data, and group voice-call signaling.
 - SOS is deliberately disabled in the app. No emergency incident is created and no contacts are notified.
 
 ## Weather setup and local development
@@ -60,7 +60,7 @@ The public RideHub website is served by the same Vue application as the mobile t
 - `/` explains the RideHub purpose, current capabilities, and limitations.
 - `/auth?mode=register` creates a Neon Managed Auth account.
 - `/auth?mode=login` signs in to the shared RideHub account.
-- The Android/iOS app is sign-in only. Create and verify an account on the website, then sign in to the app with the same email and password. Both clients use the same Neon Auth project/branch and user records; users still sign in separately on each device.
+- The Android app offers both account creation and sign-in. New accounts must verify their email before app access; the website and APK share the same Neon Auth project/branch and user records.
 - The website and mobile app remember the signed-in session across browser reloads and app restarts by default. Riders remain signed in until they choose Sign out; sessions may still end if they expire or are revoked by the auth provider.
 - **Forgot password?** on the login form sends a Neon Auth recovery code; enter it with a new password to restore account access.
 - `/verify-email` checks the emailed verification code. An email address is accepted only after the account owner can access its inbox; this confirms mailbox access, not legal identity.
@@ -91,7 +91,7 @@ In Xcode, configure the App target's signing team, archive it, and upload the bu
 
 ## Neon database
 
-The project is linked to the Neon **RIDE HUB** project on the `ridehub-dev` branch. Neon CLI stores the pooled `DATABASE_URL` and direct migration-only `DATABASE_URL_UNPOOLED` in the ignored `.env.local` file. Do not commit that file. Prisma loads `.env.local` and falls back to `.env`.
+The project uses the Neon **RIDE HUB** project (`plain-boat-55001755`) with separate `ridehub-dev` and `production` branches. Do not assume the ignored `.env.local` targets development; verify the target branch before running a migration. Do not commit `.env.local`. Prisma loads it and then `.env`.
 
 To connect another checkout, install/authenticate the Neon CLI, then link the existing project and use the development branch:
 
@@ -100,14 +100,16 @@ neon link --project-id plain-boat-55001755 --no-env-pull -y
 neon checkout ridehub-dev
 ```
 
-Apply the project migrations to the selected development branch:
+Apply the project migrations to the development branch using a direct (non-pooled) URL. The connection string is held only in the current PowerShell process:
 
 ```powershell
-npm run prisma:generate
+$env:DATABASE_URL_UNPOOLED = neon connection-string ridehub-dev --project-id plain-boat-55001755 --database-name neondb
+npx prisma migrate status
 npm run prisma:migrate:deploy
+Remove-Item Env:DATABASE_URL_UNPOOLED
 ```
 
-Migrations use `DATABASE_URL_UNPOOLED`; application queries should use the pooled `DATABASE_URL`. Do not switch to `production` or apply schema changes there without first testing them on a separate branch.
+Migrations use `DATABASE_URL_UNPOOLED`; application queries should use the pooled `DATABASE_URL`. Check `npx prisma migrate status` before applying changes, and test migrations on `ridehub-dev` before applying them to `production`.
 
 Home and Live Map use the last GPS fix to show nearby weather and refresh automatically while either view is open, about every 10 minutes or after a significant location change. To start, locate once in Live Map; no manual weather refresh button is needed. The last fix and forecast are stored only on-device, scoped to the signed-in account, and cleared at sign-out; the API does not persist coordinates. GPS is not sampled in the background, and trip tracking stops when the map is left or the app is backgrounded.
 
@@ -142,7 +144,7 @@ npm run build
 
 Map search and routing require a working internet connection and Mapbox token with the required public API scopes. Route distance, duration, and steps come from Mapbox's driving profile; they are estimates, not motorcycle-specific navigation or guaranteed turn-by-turn guidance. The map can be switched between pitched 3D terrain/buildings and 2D. The GPS marker displays the signed-in user's name; it does not display other riders because cross-user location sharing is not implemented.
 
-The current API accepts only explicit latitude/longitude forecast requests. It does not expose a weather route planner or claim to monitor background conditions. Community groups, join requests, approved membership, admin settings, moderation, and meeting metadata are stored on the server; meeting coordinates are returned only to the community admin. Chat text, images, and voice messages are stored only on the current device and are not synchronized to other riders. Community admins can send voice messages up to one minute. The call UI is only a local preview, not a remote group call. Destinations and live trip locations remain on the device and are not shared with a group.
+The current API accepts only explicit latitude/longitude forecast requests. It does not expose a weather route planner or claim to monitor background conditions. Community groups, join requests, approved membership, admin settings, moderation, messages, and voice-call signaling are stored on the server; meeting coordinates are returned only to the community admin. Approved members can view shared text, image, and voice messages; chat clients poll for updates every two seconds. Authors can edit or unsend their own messages, while community admins can remove any message. Messages created by older app versions remain local to the original device and are marked as such. Live group call audio is peer-to-peer after signaling; public STUN providers can observe network addresses, and a restrictive network may require TURN relay infrastructure. Destinations and live trip locations remain on the device and are not shared with a group.
 
 ## Profile picture storage
 

@@ -451,6 +451,9 @@ model Community {
   meeting     Json?
   createdAt   DateTime @default(now()) @db.Timestamptz(3)
   members     CommunityMembership[]
+  voiceCall   CommunityVoiceCall?
+  chatMessages CommunityChatMessage[]
+  chatEvents   CommunityChatEvent[]
 
   @@index([createdAt(sort: Desc)])
 }
@@ -469,4 +472,66 @@ model CommunityMembership {
   @@id([communityId, userId])
   @@index([communityId, status])
   @@index([userId, status])
+}
+
+model CommunityVoiceCall {
+  communityId  String @id @db.Uuid
+  callId       String @unique @db.Uuid
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  community    Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  participants CommunityVoiceParticipant[]
+  signals      CommunityVoiceSignal[]
+}
+
+model CommunityVoiceParticipant {
+  communityId String @db.Uuid
+  userId      String @db.VarChar(128)
+  displayName String @db.VarChar(80)
+  joinedAt    DateTime @default(now()) @db.Timestamptz(3)
+  lastSeenAt  DateTime @default(now()) @db.Timestamptz(3)
+  call        CommunityVoiceCall @relation(fields: [communityId], references: [communityId], onDelete: Cascade)
+
+  @@id([communityId, userId])
+  @@index([communityId, lastSeenAt])
+}
+
+model CommunityVoiceSignal {
+  sequence    BigInt @id @default(autoincrement())
+  communityId String @db.Uuid
+  callId      String @db.Uuid
+  fromUserId  String @db.VarChar(128)
+  toUserId    String @db.VarChar(128)
+  kind        String @db.VarChar(20)
+  payload     Json
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  call        CommunityVoiceCall @relation(fields: [communityId], references: [communityId], onDelete: Cascade)
+
+  @@index([communityId, callId, toUserId, sequence])
+  @@index([createdAt])
+}
+
+model CommunityChatMessage {
+  id           String    @id @default(uuid()) @db.Uuid
+  communityId  String    @db.Uuid
+  senderId     String    @db.VarChar(128)
+  senderName   String    @db.VarChar(80)
+  text         String    @db.VarChar(1000)
+  imageDataUrl String?   @db.Text
+  audioDataUrl String?   @db.Text
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+  editedAt     DateTime? @db.Timestamptz(3)
+  community    Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId, createdAt])
+}
+
+model CommunityChatEvent {
+  sequence    BigInt    @id @default(autoincrement())
+  communityId String    @db.Uuid
+  messageId   String    @db.Uuid
+  kind        String    @db.VarChar(10)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId, sequence])
 }

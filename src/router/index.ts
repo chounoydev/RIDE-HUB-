@@ -70,17 +70,10 @@ router.beforeEach(async (to) => {
     if (to.path === '/') {
       return auth.user ? '/tabs/home' : { path: '/auth', query: { mode: 'login' } }
     }
-    if (!auth.user && to.path !== '/auth') {
+    if (!auth.user && to.path !== '/auth' && to.path !== '/verify-email') {
       return { path: '/auth', query: { mode: 'login', redirect: to.fullPath } }
     }
     if (auth.user && to.path === '/auth') return '/tabs/home'
-  }
-
-  if (isNativeApp && to.path === '/auth' && to.query.mode === 'register') {
-    return {
-      path: '/auth',
-      query: { ...to.query, mode: 'login' },
-    }
   }
 
   if (!to.meta.requiresAuth) return true

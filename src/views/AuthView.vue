@@ -4,15 +4,13 @@ import { IonContent, IonIcon, IonPage } from '@ionic/vue'
 import { eyeOffOutline, eyeOutline, shieldCheckmarkOutline } from 'ionicons/icons'
 import { useRoute, useRouter } from 'vue-router'
 import BrandLogo from '@/components/BrandLogo.vue'
-import { getAuthClient, getAuthErrorMessage, isNativeApp } from '@/services/auth'
+import { getAuthClient, getAuthErrorMessage } from '@/services/auth'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const mode = computed(() =>
-  route.query.mode === 'register' && !isNativeApp ? 'register' : 'login',
-)
+const mode = computed(() => route.query.mode === 'register' ? 'register' : 'login')
 const isRegister = computed(() => mode.value === 'register')
 const isForgot = computed(() => route.query.mode === 'forgot')
 const name = ref('')
@@ -58,7 +56,7 @@ async function setMode(nextMode: 'login' | 'register') {
   recoveryCompleted.value = false
   recoveryCode.value = ''
   await router.replace({
-    query: { ...route.query, mode: isNativeApp ? 'login' : nextMode },
+    query: { ...route.query, mode: nextMode },
   })
 }
 
@@ -197,20 +195,12 @@ async function submit() {
             <p class="auth-eyebrow">YOUR RIDING COMMUNITY STARTS HERE</p>
             <h1>Bring your<br />next ride <span>closer.</span></h1>
             <p>
-              {{
-                isNativeApp
-                  ? 'Create your account on the RideHub website, then sign in here with the same credentials.'
-                  : 'Create one RideHub account for the web and mobile app. Verify your inbox to help keep rider accounts tied to an email address you can access.'
-              }}
+              Create one RideHub account for the web and mobile app. Verify your inbox to help keep rider accounts tied to an email address you can access.
             </p>
             <div class="auth-trust">
               <ion-icon :icon="shieldCheckmarkOutline" />
               <span>
-                {{
-                  isNativeApp
-                    ? 'This app is sign-in only. Your verified website account works here.'
-                    : 'Email verification is required before app access.'
-                }}
+                Email verification is required before app access.
               </span>
             </div>
           </section>
@@ -226,7 +216,6 @@ async function submit() {
             <div
               v-else
               class="auth-tabs"
-              :class="{ 'auth-tabs--single': isNativeApp }"
               role="tablist"
               aria-label="Account action"
             >
@@ -240,7 +229,6 @@ async function submit() {
                 Log in
               </button>
               <button
-                v-if="!isNativeApp"
                 type="button"
                 role="tab"
                 :aria-selected="isRegister"
@@ -266,9 +254,7 @@ async function submit() {
                       : 'We’ll email you a secure code to reset your password.'
                     : isRegister
                       ? 'A few details and a quick email check.'
-                      : isNativeApp
-                        ? 'Sign in with the verified account you created on the RideHub website.'
-                        : 'Sign in with your verified RideHub account.'
+                      : 'Sign in with your verified RideHub account.'
                 }}
               </p>
             </div>

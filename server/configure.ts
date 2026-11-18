@@ -1,7 +1,9 @@
 import { createAvatarStorage, createNeonAuthTokenVerifier } from './avatar.js'
 import { createApp } from './app.js'
+import { PrismaCommunityChatRepository } from './community-chat.js'
 import { PrismaCommunityRepository } from './community.js'
 import { getDatabaseClient } from './db.js'
+import { PrismaVoiceCallRepository } from './voice-calls.js'
 
 export function createConfiguredApp(env: NodeJS.ProcessEnv = process.env) {
   const allowedOrigins = (env.WEB_ORIGINS ?? '')
@@ -16,6 +18,8 @@ export function createConfiguredApp(env: NodeJS.ProcessEnv = process.env) {
     : undefined
   const database = getDatabaseClient(env)
   const communities = database ? new PrismaCommunityRepository(database) : undefined
+  const communityChat = database ? new PrismaCommunityChatRepository(database) : undefined
+  const voiceCalls = database ? new PrismaVoiceCallRepository(database) : undefined
 
   const storageEnvironment = {
     accessKeyId: env.AWS_ACCESS_KEY_ID?.trim() ?? '',
@@ -56,5 +60,7 @@ export function createConfiguredApp(env: NodeJS.ProcessEnv = process.env) {
     verifyAuthToken,
     avatarStorage,
     communities,
+    communityChat,
+    voiceCalls,
   })
 }

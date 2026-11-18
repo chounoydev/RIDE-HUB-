@@ -1,6 +1,11 @@
 import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
-import { communitiesApi, type CommunityRecord } from '@/services/communities'
+import {
+  communitiesApi,
+  type CommunityChatEvent,
+  type CommunityChatMessage,
+  type CommunityRecord,
+} from '@/services/communities'
 import { useAuthStore } from '@/stores/auth'
 
 export interface CommunityMessage {
@@ -11,6 +16,8 @@ export interface CommunityMessage {
   imageDataUrl?: string
   audioDataUrl?: string
   createdAt: string
+  editedAt?: string
+  localOnly?: boolean
 }
 
 export type MeetingLocation = NonNullable<CommunityRecord['meeting']>
@@ -44,6 +51,8 @@ export const useCommunityStore = defineStore('community', () => {
   const storageError = ref('')
   let storageUserId = ''
   let loadSequence = 0
+  const messageCursors: Record<string, string> = {}
+  const messageLoadSequences: Record<string, number> = {}
 
   function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -56,6 +65,8 @@ export const useCommunityStore = defineStore('community', () => {
       && typeof value.senderName === 'string'
       && typeof value.text === 'string'
       && typeof value.createdAt === 'string'
+      && (value.editedAt === undefined || typeof value.editedAt === 'string')
+      && (value.localOnly === undefined || typeof value.localOnly === 'boolean')
   }
 
   function isLegacyCommunityGroup(value: unknown): value is LegacyCommunityGroup {
@@ -125,6 +136,7 @@ export const useCommunityStore = defineStore('community', () => {
     if (!userId) {
       storageUserId = ''
       groups.value = []
+      for (const groupId of Object.keys(messageCursors)) delete messageCursors[groupId]
       storageError.value = ''
       loading.value = false
       return
@@ -134,6 +146,7 @@ export const useCommunityStore = defineStore('community', () => {
     if (!retainCurrentGroups) {
       storageUserId = ''
       groups.value = []
+      for (const groupId of Object.keys(messageCursors)) delete messageCursors[groupId]
     }
     storageError.value = ''
     const messages = loadLocalMessages(userId)
@@ -228,15 +241,7 @@ export const useCommunityStore = defineStore('community', () => {
       description: description.trim(),
       ownerName: user.name?.trim() || user.email,
     })
-    const created = applyRecord(group)
-    created.messages.push({
-      id: crypto.randomUUID(),
-      senderId: 'system',
-      senderName: 'RideHub',
-      text: 'Group created. Welcome to the crew.',
-      createdAt: new Date().toISOString(),
-    })
-    return created
+    return applyRecord(group)
   }
 
   async function joinGroup(groupId: string) {
@@ -278,6 +283,64 @@ export const useCommunityStore = defineStore('community', () => {
     return group.membershipStatus === 'ADMIN' || group.membershipStatus === 'APPROVED'
   }
 
+  function applyMessage(group: CommunityGroup, message: CommunityChatMessage) {
+    const index = group.messages.findIndex((item) => item.id === message.id)
+    if (index === -1) group.messages.push(message)
+    else group.messages[index] = message
+    group.messages.sort((left, right) =>
+      left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+    )
+  }
+
+  function applyChatEvent(group: CommunityGroup, event: CommunityChatEvent) {
+    if (event.kind === 'DELETE') {
+      group.messages = group.messages.filter((message) => message.id !== event.messageId)
+      return
+    }
+    if (event.message) applyMessage(group, event.message)
+  }
+
+  async function loadMessages(groupId: string) {
+    const userId = auth.user?.id
+    const group = groups.value.find((item) => item.id === groupId)
+    if (!userId || !group || !isMember(group)) return
+    const sequence = (messageLoadSequences[groupId] ?? 0) + 1
+    messageLoadSequences[groupId] = sequence
+    const locallySavedMessages = [...group.messages]
+    const snapshot = await communitiesApi.listMessages(groupId)
+    if (
+      auth.user?.id !== userId
+      || messageLoadSequences[groupId] !== sequence
+      || !groups.value.some((item) => item.id === groupId && isMember(item))
+    ) return
+    const sharedMessageIds = new Set(snapshot.messages.map((message) => message.id))
+    const localOnlyMessages = locallySavedMessages
+      .filter((message) => !sharedMessageIds.has(message.id))
+      .map((message) => ({ ...message, localOnly: true }))
+    group.messages = [...snapshot.messages, ...localOnlyMessages]
+      .sort((left, right) =>
+        left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+      )
+    messageCursors[groupId] = snapshot.cursor
+  }
+
+  async function pollMessages(groupId: string) {
+    const userId = auth.user?.id
+    const group = groups.value.find((item) => item.id === groupId)
+    if (!userId || !group || !isMember(group)) return
+    if (messageCursors[groupId] === undefined) {
+      await loadMessages(groupId)
+      return
+    }
+    const updates = await communitiesApi.pollMessages(groupId, messageCursors[groupId]!)
+    if (
+      auth.user?.id !== userId
+      || !groups.value.some((item) => item.id === groupId && isMember(item))
+    ) return
+    for (const event of updates.events) applyChatEvent(group, event)
+    messageCursors[groupId] = updates.cursor
+  }
+
   async function setMeeting(groupId: string, meeting: MeetingLocation) {
     const group = groups.value.find((item) => item.id === groupId)
     if (!group) throw new Error('Group could not be found.')
@@ -309,7 +372,7 @@ export const useCommunityStore = defineStore('community', () => {
     return applyRecord(await communitiesApi.update(groupId, updates))
   }
 
-  function sendMessage(groupId: string, text: string, imageDataUrl?: string, audioDataUrl?: string) {
+  async function sendMessage(groupId: string, text: string, imageDataUrl?: string, audioDataUrl?: string) {
     const user = auth.user
     if (!user) throw new Error('Sign in to send messages.')
     const group = groups.value.find((item) => item.id === groupId)
@@ -322,15 +385,41 @@ export const useCommunityStore = defineStore('community', () => {
       throw new Error('You are muted in this group. Contact the admin for help.')
     }
     if (!text.trim() && !imageDataUrl && !audioDataUrl) return
-    group.messages.push({
-      id: crypto.randomUUID(),
-      senderId: user.id,
-      senderName: user.name?.trim() || user.email,
+    const message = await communitiesApi.sendMessage(groupId, {
       text: text.trim(),
-      imageDataUrl,
-      audioDataUrl,
-      createdAt: new Date().toISOString(),
+      ...(imageDataUrl ? { imageDataUrl } : {}),
+      ...(audioDataUrl ? { audioDataUrl } : {}),
     })
+    applyMessage(group, message)
+    return message
+  }
+
+  async function editMessage(groupId: string, messageId: string, text: string) {
+    const user = auth.user
+    const group = groups.value.find((item) => item.id === groupId)
+    if (!user || !group || !isMember(group)) throw new Error('Join this group before editing messages.')
+    if (group.messages.find((item) => item.id === messageId)?.localOnly) {
+      throw new Error('This older message was saved only on this device and cannot be changed for the group.')
+    }
+    const message = await communitiesApi.editMessage(groupId, messageId, text)
+    applyMessage(group, message)
+    return message
+  }
+
+  async function deleteMessage(groupId: string, messageId: string) {
+    const user = auth.user
+    const group = groups.value.find((item) => item.id === groupId)
+    if (!user || !group || !isMember(group)) throw new Error('Join this group before removing messages.')
+    const message = group.messages.find((item) => item.id === messageId)
+    if (!message) throw new Error('This message is no longer available.')
+    if (message.localOnly) {
+      throw new Error('This older message was saved only on this device and cannot be changed for the group.')
+    }
+    if (message.senderId !== user.id && !isOwner(group)) {
+      throw new Error('You can only remove your own messages.')
+    }
+    await communitiesApi.deleteMessage(groupId, messageId)
+    group.messages = group.messages.filter((item) => item.id !== messageId)
   }
 
   return {
@@ -349,6 +438,10 @@ export const useCommunityStore = defineStore('community', () => {
     setMeeting,
     moderateMember,
     updateGroup,
+    loadMessages,
+    pollMessages,
     sendMessage,
+    editMessage,
+    deleteMessage,
   }
 })

@@ -8,6 +8,8 @@ import {
   type AvatarStorage,
 } from './avatar.js'
 import { CommunityError, type CommunityRepository } from './community.js'
+import { CommunityChatError, type CommunityChatRepository } from './community-chat.js'
+import { VoiceCallError, type VoiceCallRepository, type VoiceSignalKind } from './voice-calls.js'
 import { fetchWeatherSnapshot, WeatherProviderError } from './weather.js'
 
 interface AppOptions {
@@ -19,6 +21,8 @@ interface AppOptions {
   verifyAvatarToken?: (token: string) => Promise<string | null>
   avatarStorage?: AvatarStorage
   communities?: CommunityRepository
+  communityChat?: CommunityChatRepository
+  voiceCalls?: VoiceCallRepository
 }
 
 export function createApp(options: AppOptions) {
@@ -53,6 +57,24 @@ export function createApp(options: AppOptions) {
       response.status(429).json({ error: 'Community requests are temporarily rate limited. Try again shortly.' })
     },
   })
+  const voiceCallLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 300,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    handler(_request, response) {
+      response.status(429).json({ error: 'Voice call requests are temporarily rate limited. Try again shortly.' })
+    },
+  })
+  const chatLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 120,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    handler(_request, response) {
+      response.status(429).json({ error: 'Chat requests are temporarily rate limited. Try again shortly.' })
+    },
+  })
   const verifyAuthToken = options.verifyAuthToken ?? options.verifyAvatarToken
   const allowedOrigins = new Set([
     'capacitor://localhost',
@@ -83,6 +105,8 @@ export function createApp(options: AppOptions) {
       pushConfigured: false,
       avatarUploadConfigured: Boolean(verifyAuthToken && options.avatarStorage),
       sharedCommunitiesConfigured: Boolean(verifyAuthToken && options.communities),
+      communityChatConfigured: Boolean(verifyAuthToken && options.communityChat),
+      voiceCallsConfigured: Boolean(verifyAuthToken && options.voiceCalls),
     })
   })
 
@@ -123,6 +147,163 @@ export function createApp(options: AppOptions) {
     }
     next()
   }
+
+  const requireVoiceCallRepository: express.RequestHandler = (_request, response, next) => {
+    if (!options.voiceCalls) {
+      response.status(503).json({
+        error: 'Group voice calls are not configured. Set DATABASE_URL and apply the database migrations.',
+      })
+      return
+    }
+    next()
+  }
+
+  const requireCommunityChatRepository: express.RequestHandler = (_request, response, next) => {
+    if (!options.communityChat) {
+      response.status(503).json({
+        error: 'Group chat is not configured. Set DATABASE_URL and apply the database migrations.',
+      })
+      return
+    }
+    next()
+  }
+
+  app.get(
+    '/api/communities/:communityId/messages',
+    chatLimiter,
+    authenticateCommunityRequest,
+    requireCommunityChatRepository,
+    async (request, response) => {
+      const communityId = getRouteParam(request.params.communityId)
+      const userId = getCommunityUserId(response)
+      const after = request.query.after
+      response.setHeader('Cache-Control', 'no-store')
+      if (after === undefined) {
+        response.json(await options.communityChat!.list(communityId, userId))
+      } else {
+        if (typeof after !== 'string') throw new CommunityChatError(400, 'A valid chat update cursor is required.')
+        response.json(await options.communityChat!.poll(communityId, userId, after))
+      }
+    },
+  )
+
+  app.post(
+    '/api/communities/:communityId/messages',
+    chatLimiter,
+    authenticateCommunityRequest,
+    requireCommunityChatRepository,
+    async (request, response) => {
+      const message = await options.communityChat!.send(
+        getRouteParam(request.params.communityId),
+        getCommunityUserId(response),
+        request.body,
+      )
+      response.status(201).json(message)
+    },
+  )
+
+  app.patch(
+    '/api/communities/:communityId/messages/:messageId',
+    chatLimiter,
+    authenticateCommunityRequest,
+    requireCommunityChatRepository,
+    async (request, response) => {
+      const message = await options.communityChat!.edit(
+        getRouteParam(request.params.communityId),
+        getCommunityUserId(response),
+        getRouteParam(request.params.messageId),
+        request.body,
+      )
+      response.json(message)
+    },
+  )
+
+  app.delete(
+    '/api/communities/:communityId/messages/:messageId',
+    chatLimiter,
+    authenticateCommunityRequest,
+    requireCommunityChatRepository,
+    async (request, response) => {
+      await options.communityChat!.delete(
+        getRouteParam(request.params.communityId),
+        getCommunityUserId(response),
+        getRouteParam(request.params.messageId),
+      )
+      response.status(204).end()
+    },
+  )
+
+  app.post(
+    '/api/communities/:communityId/voice/join',
+    voiceCallLimiter,
+    authenticateCommunityRequest,
+    requireVoiceCallRepository,
+    async (request, response) => {
+      const state = await options.voiceCalls!.join(
+        getRouteParam(request.params.communityId),
+        getCommunityUserId(response),
+      )
+      response.setHeader('Cache-Control', 'no-store')
+      response.json(state)
+    },
+  )
+
+  app.get(
+    '/api/communities/:communityId/voice/state',
+    voiceCallLimiter,
+    authenticateCommunityRequest,
+    requireVoiceCallRepository,
+    async (request, response) => {
+      const callId = getQueryParam(request.query.callId, 'A valid call identifier is required.')
+      const afterSequence = getQueryParam(request.query.after, 'A valid voice call cursor is required.')
+      const state = await options.voiceCalls!.poll(
+        getRouteParam(request.params.communityId),
+        getCommunityUserId(response),
+        callId,
+        afterSequence,
+      )
+      response.setHeader('Cache-Control', 'no-store')
+      response.json(state)
+    },
+  )
+
+  app.post(
+    '/api/communities/:communityId/voice/signals',
+    voiceCallLimiter,
+    authenticateCommunityRequest,
+    requireVoiceCallRepository,
+    async (request, response) => {
+      const body = isRecord(request.body) ? request.body : {}
+      const callId = requireBodyText(body.callId, 'A valid call identifier is required.')
+      const recipientId = requireBodyText(body.toUserId, 'A valid recipient is required.')
+      const kind = requireVoiceSignalKind(body.kind)
+      await options.voiceCalls!.sendSignal(
+        getRouteParam(request.params.communityId),
+        getCommunityUserId(response),
+        callId,
+        recipientId,
+        kind,
+        body.payload,
+      )
+      response.status(204).end()
+    },
+  )
+
+  app.post(
+    '/api/communities/:communityId/voice/leave',
+    voiceCallLimiter,
+    authenticateCommunityRequest,
+    requireVoiceCallRepository,
+    async (request, response) => {
+      const body = isRecord(request.body) ? request.body : {}
+      await options.voiceCalls!.leave(
+        getRouteParam(request.params.communityId),
+        getCommunityUserId(response),
+        requireBodyText(body.callId, 'A valid call identifier is required.'),
+      )
+      response.status(204).end()
+    },
+  )
 
   app.get('/api/communities', communityLimiter, authenticateCommunityRequest, requireCommunityRepository, async (_request, response) => {
     response.setHeader('Cache-Control', 'no-store')
@@ -393,6 +574,14 @@ export function createApp(options: AppOptions) {
       response.status(error.statusCode).json({ error: error.message })
       return
     }
+    if (error instanceof CommunityChatError) {
+      response.status(error.statusCode).json({ error: error.message })
+      return
+    }
+    if (error instanceof VoiceCallError) {
+      response.status(error.statusCode).json({ error: error.message })
+      return
+    }
     console.error('Unhandled API error:', error)
     response.status(500).json({ error: 'The request could not be completed.' })
   })
@@ -414,6 +603,27 @@ function getCommunityUserId(response: express.Response): string {
 
 function getRouteParam(value: string | string[] | undefined): string {
   if (typeof value !== 'string') throw new CommunityError(400, 'A valid community request path is required.')
+  return value
+}
+
+function getQueryParam(value: unknown, message: string): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 128) {
+    throw new VoiceCallError(400, message)
+  }
+  return value
+}
+
+function requireBodyText(value: unknown, message: string): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 128) {
+    throw new VoiceCallError(400, message)
+  }
+  return value
+}
+
+function requireVoiceSignalKind(value: unknown): VoiceSignalKind {
+  if (value !== 'offer' && value !== 'answer' && value !== 'candidate') {
+    throw new VoiceCallError(400, 'That WebRTC signal type is not supported.')
+  }
   return value
 }
 

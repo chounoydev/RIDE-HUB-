@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net'
 import { exportJWK, SignJWT } from 'jose'
 import { createNeonAuthTokenVerifier } from './avatar.js'
 import { createApp } from './app.js'
+import type { CommunityChatRepository } from './community-chat.js'
 import { CommunityError, type CommunityRepository } from './community.js'
 
 function responsePayload() {
@@ -153,7 +154,144 @@ test('reports background monitoring and push as inactive', async () => {
       pushConfigured: false,
       avatarUploadConfigured: false,
       sharedCommunitiesConfigured: false,
+      communityChatConfigured: false,
+      voiceCallsConfigured: false,
     })
+  } finally {
+    await server.close()
+  }
+})
+
+test('requires authentication before joining a group voice call', async () => {
+  let joined = false
+  const server = await listen(createApp({
+    weatherApiKey: '',
+    verifyAuthToken: async (token) => token === 'valid-token' ? 'rider-1' : null,
+    voiceCalls: {
+      async join() {
+        joined = true
+        return { callId: '00000000-0000-4000-8000-000000000001', participants: [], signals: [] }
+      },
+      async poll() { throw new Error('Unexpected poll request.') },
+      async sendSignal() { throw new Error('Unexpected signal request.') },
+      async leave() { throw new Error('Unexpected leave request.') },
+    },
+  }))
+
+  try {
+    const url = `${server.url}/api/communities/00000000-0000-4000-8000-000000000002/voice/join`
+    const unauthenticated = await fetch(url, { method: 'POST' })
+    assert.equal(unauthenticated.status, 401)
+    assert.equal(joined, false)
+
+    const authenticated = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer valid-token' },
+    })
+    assert.equal(authenticated.status, 200)
+    assert.equal(joined, true)
+  } finally {
+    await server.close()
+  }
+})
+
+test('requires authentication and shares persisted community chat updates', async () => {
+  const requestedUsers: string[] = []
+  const actions: string[] = []
+  const chat: CommunityChatRepository = {
+    async list(_communityId, userId) {
+      requestedUsers.push(userId)
+      return { messages: [], cursor: '0' }
+    },
+    async poll(_communityId, userId, afterSequence) {
+      requestedUsers.push(userId)
+      return { events: [], cursor: afterSequence }
+    },
+    async send(_communityId, userId, value) {
+      requestedUsers.push(userId)
+      assert.deepEqual(value, { text: 'Ride at sunrise?' })
+      return {
+        id: '00000000-0000-4000-8000-000000000003',
+        senderId: userId,
+        senderName: 'Alex',
+        text: 'Ride at sunrise?',
+        createdAt: new Date().toISOString(),
+      }
+    },
+    async edit(_communityId, userId, messageId, value) {
+      actions.push(`edit:${userId}:${messageId}`)
+      assert.deepEqual(value, { text: 'Updated plan' })
+      return {
+        id: messageId,
+        senderId: userId,
+        senderName: 'Alex',
+        text: 'Updated plan',
+        createdAt: new Date().toISOString(),
+        editedAt: new Date().toISOString(),
+      }
+    },
+    async delete(_communityId, userId, messageId) {
+      actions.push(`delete:${userId}:${messageId}`)
+    },
+  }
+  const server = await listen(createApp({
+    weatherApiKey: '',
+    verifyAuthToken: async (token) => token === 'valid-token' ? 'rider-1' : null,
+    communityChat: chat,
+  }))
+  const messagesUrl = `${server.url}/api/communities/00000000-0000-4000-8000-000000000002/messages`
+
+  try {
+    const unauthenticated = await fetch(messagesUrl)
+    assert.equal(unauthenticated.status, 401)
+    assert.deepEqual(requestedUsers, [])
+
+    const snapshot = await fetch(messagesUrl, {
+      headers: { Authorization: 'Bearer valid-token' },
+    })
+    assert.equal(snapshot.status, 200)
+    assert.deepEqual(await snapshot.json(), { messages: [], cursor: '0' })
+
+    const updates = await fetch(`${messagesUrl}?after=0`, {
+      headers: { Authorization: 'Bearer valid-token' },
+    })
+    assert.equal(updates.status, 200)
+    assert.deepEqual(await updates.json(), { events: [], cursor: '0' })
+
+    const sent = await fetch(messagesUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer valid-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ text: 'Ride at sunrise?' }),
+    })
+    assert.equal(sent.status, 201)
+    const sentPayload = await sent.json()
+    assert.ok(typeof sentPayload === 'object' && sentPayload !== null && 'senderName' in sentPayload)
+    assert.equal(sentPayload.senderName, 'Alex')
+
+    const messageId = '00000000-0000-4000-8000-000000000003'
+    const edited = await fetch(`${messagesUrl}/${messageId}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: 'Bearer valid-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ text: 'Updated plan' }),
+    })
+    assert.equal(edited.status, 200)
+    const editedPayload = await edited.json()
+    assert.ok(typeof editedPayload === 'object' && editedPayload !== null && 'text' in editedPayload)
+    assert.equal(editedPayload.text, 'Updated plan')
+
+    const deleted = await fetch(`${messagesUrl}/${messageId}`, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer valid-token' },
+    })
+    assert.equal(deleted.status, 204)
+    assert.deepEqual(requestedUsers, ['rider-1', 'rider-1', 'rider-1'])
+    assert.deepEqual(actions, [`edit:rider-1:${messageId}`, `delete:rider-1:${messageId}`])
   } finally {
     await server.close()
   }

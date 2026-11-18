@@ -38,6 +38,52 @@ export interface CommunityRecord {
   joinRequests?: CommunityJoinRequest[]
 }
 
+export type VoiceSignalKind = 'offer' | 'answer' | 'candidate'
+
+export interface VoiceCallParticipant {
+  userId: string
+  displayName: string
+}
+
+export type VoiceCallSignal =
+  | { sequence: string; fromUserId: string; kind: 'offer'; payload: RTCSessionDescriptionInit }
+  | { sequence: string; fromUserId: string; kind: 'answer'; payload: RTCSessionDescriptionInit }
+  | { sequence: string; fromUserId: string; kind: 'candidate'; payload: RTCIceCandidateInit }
+
+export interface VoiceCallState {
+  callId: string
+  participants: VoiceCallParticipant[]
+  signals: VoiceCallSignal[]
+}
+
+export interface CommunityChatMessage {
+  id: string
+  senderId: string
+  senderName: string
+  text: string
+  imageDataUrl?: string
+  audioDataUrl?: string
+  createdAt: string
+  editedAt?: string
+}
+
+export interface CommunityChatSnapshot {
+  messages: CommunityChatMessage[]
+  cursor: string
+}
+
+export interface CommunityChatEvent {
+  sequence: string
+  kind: 'MESSAGE' | 'EDIT' | 'DELETE'
+  messageId: string
+  message?: CommunityChatMessage
+}
+
+export interface CommunityChatUpdates {
+  events: CommunityChatEvent[]
+  cursor: string
+}
+
 interface CreateCommunityInput {
   id?: string
   name: string
@@ -126,6 +172,64 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function isVoiceSignal(value: unknown): value is VoiceCallSignal {
+  if (
+    !isRecord(value)
+    || typeof value.sequence !== 'string'
+    || typeof value.fromUserId !== 'string'
+    || !isRecord(value.payload)
+  ) return false
+  if (value.kind === 'offer' || value.kind === 'answer') {
+    return value.payload.type === value.kind && typeof value.payload.sdp === 'string'
+  }
+  return value.kind === 'candidate' && typeof value.payload.candidate === 'string'
+}
+
+function isVoiceCallState(value: unknown): value is VoiceCallState {
+  return isRecord(value)
+    && typeof value.callId === 'string'
+    && Array.isArray(value.participants)
+    && value.participants.every((participant) =>
+      isRecord(participant)
+      && typeof participant.userId === 'string'
+      && typeof participant.displayName === 'string',
+    )
+    && Array.isArray(value.signals)
+    && value.signals.every(isVoiceSignal)
+}
+
+function isCommunityChatMessage(value: unknown): value is CommunityChatMessage {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && typeof value.senderId === 'string'
+    && typeof value.senderName === 'string'
+    && typeof value.text === 'string'
+    && typeof value.createdAt === 'string'
+    && (value.imageDataUrl === undefined || typeof value.imageDataUrl === 'string')
+    && (value.audioDataUrl === undefined || typeof value.audioDataUrl === 'string')
+    && (value.editedAt === undefined || typeof value.editedAt === 'string')
+}
+
+function isCommunityChatSnapshot(value: unknown): value is CommunityChatSnapshot {
+  return isRecord(value)
+    && typeof value.cursor === 'string'
+    && Array.isArray(value.messages)
+    && value.messages.every(isCommunityChatMessage)
+}
+
+function isCommunityChatUpdates(value: unknown): value is CommunityChatUpdates {
+  return isRecord(value)
+    && typeof value.cursor === 'string'
+    && Array.isArray(value.events)
+    && value.events.every((event) =>
+      isRecord(event)
+      && typeof event.sequence === 'string'
+      && typeof event.messageId === 'string'
+      && (event.kind === 'MESSAGE' || event.kind === 'EDIT' || event.kind === 'DELETE')
+      && (event.message === undefined || isCommunityChatMessage(event.message)),
+    )
+}
+
 function expectCommunity(value: unknown): CommunityRecord {
   if (!isCommunityRecord(value)) {
     throw new Error('The community service returned an invalid group.')
@@ -180,5 +284,82 @@ export const communitiesApi = {
       'POST',
       { memberId, action },
     ))
+  },
+
+  async listMessages(id: string): Promise<CommunityChatSnapshot> {
+    const value = await request(`/communities/${encodeURIComponent(id)}/messages`)
+    if (!isCommunityChatSnapshot(value)) {
+      throw new Error('The chat service returned an invalid message history.')
+    }
+    return value
+  },
+
+  async pollMessages(id: string, afterSequence: string): Promise<CommunityChatUpdates> {
+    const query = new URLSearchParams({ after: afterSequence })
+    const value = await request(`/communities/${encodeURIComponent(id)}/messages?${query.toString()}`)
+    if (!isCommunityChatUpdates(value)) {
+      throw new Error('The chat service returned invalid message updates.')
+    }
+    return value
+  },
+
+  async sendMessage(
+    id: string,
+    input: { text: string; imageDataUrl?: string; audioDataUrl?: string },
+  ): Promise<CommunityChatMessage> {
+    const value = await request(`/communities/${encodeURIComponent(id)}/messages`, 'POST', input)
+    if (!isCommunityChatMessage(value)) throw new Error('The chat service returned an invalid message.')
+    return value
+  },
+
+  async editMessage(id: string, messageId: string, text: string): Promise<CommunityChatMessage> {
+    const value = await request(
+      `/communities/${encodeURIComponent(id)}/messages/${encodeURIComponent(messageId)}`,
+      'PATCH',
+      { text },
+    )
+    if (!isCommunityChatMessage(value)) throw new Error('The chat service returned an invalid message.')
+    return value
+  },
+
+  async deleteMessage(id: string, messageId: string): Promise<void> {
+    await request(
+      `/communities/${encodeURIComponent(id)}/messages/${encodeURIComponent(messageId)}`,
+      'DELETE',
+    )
+  },
+
+  async joinVoiceCall(id: string): Promise<VoiceCallState> {
+    const value = await request(`/communities/${encodeURIComponent(id)}/voice/join`, 'POST', {})
+    if (!isVoiceCallState(value)) throw new Error('The voice call service returned an invalid call state.')
+    return value
+  },
+
+  async pollVoiceCall(id: string, callId: string, afterSequence: string): Promise<VoiceCallState> {
+    const query = new URLSearchParams({ callId, after: afterSequence })
+    const value = await request(
+      `/communities/${encodeURIComponent(id)}/voice/state?${query.toString()}`,
+    )
+    if (!isVoiceCallState(value)) throw new Error('The voice call service returned an invalid call state.')
+    return value
+  },
+
+  async sendVoiceSignal(
+    id: string,
+    callId: string,
+    toUserId: string,
+    kind: VoiceSignalKind,
+    payload: RTCSessionDescriptionInit | RTCIceCandidateInit,
+  ): Promise<void> {
+    await request(`/communities/${encodeURIComponent(id)}/voice/signals`, 'POST', {
+      callId,
+      toUserId,
+      kind,
+      payload,
+    })
+  },
+
+  async leaveVoiceCall(id: string, callId: string): Promise<void> {
+    await request(`/communities/${encodeURIComponent(id)}/voice/leave`, 'POST', { callId })
   },
 }
