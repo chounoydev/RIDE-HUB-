@@ -1,6 +1,5 @@
 import { getAuthClient } from '@/services/auth'
-
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL?.trim() || '/api').replace(/\/$/, '')
+import { apiBaseUrl } from '@/services/apiBase'
 
 interface AvatarUploadResponse {
   objectKey: string

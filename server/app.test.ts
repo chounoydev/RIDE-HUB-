@@ -171,6 +171,20 @@ test('allows same-origin requests without listing the deployment domain', async 
   }
 })
 
+test('allows the Android Capacitor WebView origin', async () => {
+  const server = await listen(createApp({ weatherApiKey: '' }))
+
+  try {
+    const response = await fetch(`${server.url}/api/health`, {
+      headers: { Origin: 'https://localhost' },
+    })
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('access-control-allow-origin'), 'https://localhost')
+  } finally {
+    await server.close()
+  }
+})
+
 test('rejects cross-origin requests that are not configured', async () => {
   const server = await listen(createApp({ weatherApiKey: '' }))
 

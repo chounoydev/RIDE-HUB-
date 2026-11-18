@@ -1,3 +1,5 @@
+import { apiBaseUrl } from './apiBase'
+
 export type WeatherAlertCategory =
   | 'HEAVY_RAIN'
   | 'THUNDERSTORM'
@@ -74,8 +76,6 @@ export interface WeatherServiceStatus {
   pushConfigured: boolean
   avatarUploadConfigured?: boolean
 }
-
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL?.trim() || '/api').replace(/\/$/, '')
 
 async function getJson<T>(path: string): Promise<T> {
   let response: Response

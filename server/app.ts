@@ -43,6 +43,7 @@ export function createApp(options: AppOptions) {
   })
   const allowedOrigins = new Set([
     'capacitor://localhost',
+    'https://localhost',
     'http://localhost',
     'http://localhost:5173',
     ...(options.allowedOrigins ?? []),

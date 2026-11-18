@@ -47,11 +47,11 @@ The project includes a GitHub Actions workflow that runs the server tests and pr
 
 Set these Vercel environment variables before deploying:
 
-- Build/client: `VITE_MAPBOX_TOKEN` and `VITE_NEON_AUTH_URL`. Set the Auth URL to the Neon branch used by the deployment. `VITE_ANDROID_DOWNLOAD_URL` and `VITE_IOS_DOWNLOAD_URL` are optional.
+- Build/client: `VITE_MAPBOX_TOKEN` and `VITE_NEON_AUTH_URL`. Set the Auth URL to the Neon branch used by the deployment. `VITE_API_BASE_URL` is optional for the website (defaults to `/api`); Android defaults to the RideHub Vercel API. Set it to `https://<your-domain>/api` when building an APK for a different deployment. `VITE_ANDROID_DOWNLOAD_URL` and `VITE_IOS_DOWNLOAD_URL` are optional.
 - Server/runtime: `WEATHER_API_KEY`, `NEON_AUTH_BASE_URL`, and `NEON_AUTH_JWKS_URL`. Add `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, and `AWS_REGION` only when enabling profile photo uploads.
 - Do not add secrets to `VITE_` variables. `DATABASE_URL` and `DATABASE_URL_UNPOOLED` are not required by the deployed API; use them only for database tooling/migrations.
 
-The API allows same-origin web requests and the local/Capacitor origins; add any separate trusted web clients to `WEB_ORIGINS` as comma-separated origins. Vercel Functions limit request bodies to 4.5 MB, so profile photo uploads are capped at 4 MB. A deployment is only fully functional after its required provider credentials are configured. Rotate any credentials that have been shared in chat before adding replacement values to Vercel.
+The API allows same-origin web requests and the local/Capacitor origins, including Android's `https://localhost`; add other clients to `WEB_ORIGINS` as comma-separated origins. Add `https://localhost` to the Neon Auth trusted domains on the branch used by the APK. Vercel Functions limit request bodies to 4.5 MB, so profile photo uploads are capped at 4 MB. A deployment is only fully functional after its required provider credentials are configured. Rotate any credentials that have been shared in chat before adding replacement values to Vercel.
 
 ## Web accounts and the admin portal
 
@@ -166,4 +166,4 @@ Set-Location .\android
 
 The APK is written to `android\app\build\outputs\apk\debug\app-debug.apk`. iOS builds require macOS and Xcode. Background location, notification delivery, and their platform permission declarations are not configured.
 
-The website's Android download is a release APK. Release builds use the `ridehubReleaseSigning*` values in your **user-level** Gradle properties, not files committed to this repository. Keep the release keystore and its passwords backed up securely; losing them prevents signing compatible app updates. Run `.\gradlew.bat publishReleaseApk` from `android\` to build and copy the signed APK to `public\downloads\ridehub-android.apk`, then run `npm run build` so Vite includes it in `dist`. Do not distribute an unsigned or debug APK as the public release.
+The website's Android download is a release APK. Release builds use the `ridehubReleaseSigning*` values in your **user-level** Gradle properties, not files committed to this repository. Keep the release keystore and its passwords backed up securely; losing them prevents signing compatible app updates. From the project root, run `npm run build:android-web`, `npx cap sync android`, then `.\gradlew.bat publishReleaseApk` from `android\`; run `npm run build` again so Vite includes the new signed APK in `dist`. The Android-specific build omits the website's APK download from the app bundle to avoid nesting one APK inside another. Do not distribute an unsigned or debug APK as the public release.
