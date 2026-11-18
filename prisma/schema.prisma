@@ -1,0 +1,434 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  RIDER
+  MODERATOR
+  ADMIN
+}
+
+enum RideVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum RideStatus {
+  SCHEDULED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum RideMemberRole {
+  RIDER
+  LEADER
+  SWEEPER
+}
+
+enum RideRegistrationStatus {
+  REGISTERED
+  WAITLISTED
+  CANCELLED
+}
+
+enum RoadReportStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  RESOLVED
+}
+
+enum MotorcycleServiceType {
+  OIL_CHANGE
+  TIRE_INSPECTION
+  BRAKE_INSPECTION
+  BATTERY_MAINTENANCE
+  GENERAL_SERVICE
+  OTHER
+}
+
+enum WeatherAlertCategory {
+  HEAVY_RAIN
+  THUNDERSTORM
+  LIGHTNING
+  STRONG_WIND
+  EXTREME_HEAT
+  SEVERE_WEATHER
+  FLOODING_RISK
+  OTHER
+}
+
+enum WeatherAlertSeverity {
+  MINOR
+  MODERATE
+  SEVERE
+  EXTREME
+}
+
+enum WeatherLocationKind {
+  CURRENT
+  SAVED
+  DESTINATION
+  ROUTE
+  GROUP_RIDE
+}
+
+enum NotificationChannel {
+  IN_APP
+  PUSH
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+  SUPPRESSED
+}
+
+enum EmergencyIncidentType {
+  MOTORCYCLE_ACCIDENT
+  MOTORCYCLE_BREAKDOWN
+  MEDICAL_EMERGENCY
+  FLAT_TIRE
+  ENGINE_PROBLEM
+  LOST_RIDER
+  PERSONAL_SAFETY
+  OTHER
+}
+
+enum EmergencyIncidentStatus {
+  SOS_ACTIVATED
+  NOTIFICATIONS_SENT
+  ASSISTANCE_ACKNOWLEDGED
+  ASSISTANCE_IN_PROGRESS
+  RESOLVED
+  CANCELED
+}
+
+enum EmergencyNotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  ACKNOWLEDGED
+}
+
+model User {
+  id              String   @id @default(uuid()) @db.Uuid
+  email           String   @unique @db.VarChar(320)
+  displayName     String   @db.VarChar(80)
+  role            UserRole @default(RIDER)
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+  motorcycles     Motorcycle[]
+  ledRides        Ride[]   @relation("RideLeader")
+  rideParticipants RideParticipant[]
+  locations       RiderLocation[]
+  roadReports     RoadReport[]
+  weatherPreference WeatherNotificationPreference?
+  weatherLocations WeatherWatchLocation[]
+  weatherAlerts    WeatherAlert[]
+  notificationLogs NotificationDeliveryLog[]
+  emergencyContacts EmergencyContact[]
+  emergencyIncidents EmergencyIncident[]
+  emergencyNotifications EmergencyNotification[] @relation("EmergencyRecipient")
+  emergencyAcknowledgements EmergencyAcknowledgement[]
+
+  @@index([role])
+}
+
+model Motorcycle {
+  id             String   @id @default(uuid()) @db.Uuid
+  ownerId        String   @db.Uuid
+  make           String   @db.VarChar(80)
+  model          String   @db.VarChar(80)
+  modelYear      Int?
+  odometerKm     Int?
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+  owner          User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  maintenance    MaintenanceRecord[]
+
+  @@index([ownerId])
+}
+
+model Ride {
+  id               String   @id @default(uuid()) @db.Uuid
+  leaderId         String   @db.Uuid
+  title            String   @db.VarChar(120)
+  description      String?  @db.VarChar(2000)
+  visibility       RideVisibility @default(PUBLIC)
+  status           RideStatus @default(SCHEDULED)
+  startsAt         DateTime @db.Timestamptz(3)
+  endedAt          DateTime? @db.Timestamptz(3)
+  distanceMeters   Int?
+  meetingLatitude  Float?
+  meetingLongitude Float?
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
+  leader           User     @relation("RideLeader", fields: [leaderId], references: [id], onDelete: Restrict)
+  participants     RideParticipant[]
+  locations        RiderLocation[]
+  weatherLocations WeatherWatchLocation[]
+
+  @@index([status, startsAt])
+  @@index([leaderId, startsAt])
+}
+
+model RideParticipant {
+  rideId    String   @db.Uuid
+  userId    String   @db.Uuid
+  role      RideMemberRole @default(RIDER)
+  status    RideRegistrationStatus @default(REGISTERED)
+  joinedAt  DateTime @default(now()) @db.Timestamptz(3)
+  attendedAt DateTime? @db.Timestamptz(3)
+  ride      Ride     @relation(fields: [rideId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([rideId, userId])
+  @@index([userId, joinedAt])
+  @@index([rideId, status])
+}
+
+model RiderLocation {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  rideId    String?  @db.Uuid
+  recordedAt DateTime @default(now()) @db.Timestamptz(3)
+  latitude  Float
+  longitude Float
+  location  Unsupported("geography(Point,4326)")?
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ride      Ride?    @relation(fields: [rideId], references: [id], onDelete: Cascade)
+
+  @@index([userId, recordedAt(sort: Desc)])
+  @@index([rideId, recordedAt])
+}
+
+model RoadReportCategory {
+  code      String   @id @db.VarChar(50)
+  label     String   @db.VarChar(80)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  reports   RoadReport[]
+}
+
+model RoadReport {
+  id           String   @id @default(uuid()) @db.Uuid
+  reporterId   String?  @db.Uuid
+  categoryCode String   @db.VarChar(50)
+  status       RoadReportStatus @default(PENDING)
+  description  String?  @db.VarChar(2000)
+  latitude     Float
+  longitude    Float
+  location     Unsupported("geography(Point,4326)")?
+  expiresAt    DateTime? @db.Timestamptz(3)
+  verifiedAt   DateTime? @db.Timestamptz(3)
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+  reporter     User?    @relation(fields: [reporterId], references: [id], onDelete: SetNull)
+  category     RoadReportCategory @relation(fields: [categoryCode], references: [code], onDelete: Restrict)
+
+  @@index([status, expiresAt])
+  @@index([categoryCode, createdAt(sort: Desc)])
+  @@index([reporterId, createdAt(sort: Desc)])
+}
+
+model MaintenanceRecord {
+  id               String   @id @default(uuid()) @db.Uuid
+  motorcycleId     String   @db.Uuid
+  serviceType      MotorcycleServiceType
+  servicedAt       DateTime @db.Timestamptz(3)
+  odometerKm       Int
+  amountMinorUnits Int?
+  currencyCode     String?  @db.Char(3)
+  notes            String?  @db.VarChar(2000)
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  motorcycle       Motorcycle @relation(fields: [motorcycleId], references: [id], onDelete: Cascade)
+
+  @@index([motorcycleId, servicedAt(sort: Desc)])
+}
+
+model WeatherNotificationPreference {
+  id                  String   @id @default(uuid()) @db.Uuid
+  userId              String   @unique @db.Uuid
+  enabled             Boolean  @default(true)
+  heavyRain           Boolean  @default(true)
+  thunderstorm        Boolean  @default(true)
+  lightning           Boolean  @default(true)
+  strongWind          Boolean  @default(true)
+  extremeHeat         Boolean  @default(true)
+  severeWeather       Boolean  @default(true)
+  floodingRisk        Boolean  @default(true)
+  locationBased       Boolean  @default(false)
+  groupRideWeather    Boolean  @default(true)
+  sound               Boolean  @default(true)
+  quietHoursStart     String?  @db.VarChar(5)
+  quietHoursEnd       String?  @db.VarChar(5)
+  pushToken           String?  @db.Text
+  createdAt           DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime @updatedAt @db.Timestamptz(3)
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([enabled, locationBased])
+}
+
+model WeatherWatchLocation {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  rideId      String?  @db.Uuid
+  kind        WeatherLocationKind
+  label       String   @db.VarChar(120)
+  latitude    Float
+  longitude   Float
+  routePoints Json?
+  enabled     Boolean  @default(true)
+  startsAt    DateTime? @db.Timestamptz(3)
+  endsAt      DateTime? @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ride        Ride?    @relation(fields: [rideId], references: [id], onDelete: Cascade)
+  alerts      WeatherAlert[]
+
+  @@index([userId, enabled])
+  @@index([rideId, startsAt])
+}
+
+model WeatherAlert {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String?  @db.Uuid
+  locationId  String?  @db.Uuid
+  provider    String   @db.VarChar(40)
+  providerId  String   @db.VarChar(255)
+  dedupeKey   String   @unique @db.VarChar(255)
+  category    WeatherAlertCategory
+  severity    WeatherAlertSeverity
+  title       String   @db.VarChar(180)
+  description String   @db.Text
+  instruction String?  @db.Text
+  area        String?  @db.VarChar(500)
+  latitude    Float?
+  longitude   Float?
+  effectiveAt DateTime? @db.Timestamptz(3)
+  expiresAt   DateTime? @db.Timestamptz(3)
+  fingerprint String   @db.VarChar(64)
+  official    Boolean  @default(false)
+  rawPayload  Json?
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  location    WeatherWatchLocation? @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  deliveryLogs NotificationDeliveryLog[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([locationId, expiresAt])
+  @@index([category, expiresAt])
+}
+
+model NotificationDeliveryLog {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @db.Uuid
+  alertId           String?  @db.Uuid
+  channel           NotificationChannel
+  status            NotificationDeliveryStatus @default(PENDING)
+  idempotencyKey    String   @unique @db.VarChar(255)
+  providerMessageId String?  @db.VarChar(255)
+  error             String?  @db.Text
+  attemptedAt       DateTime @default(now()) @db.Timestamptz(3)
+  sentAt            DateTime? @db.Timestamptz(3)
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  alert             WeatherAlert? @relation(fields: [alertId], references: [id], onDelete: SetNull)
+
+  @@index([userId, attemptedAt(sort: Desc)])
+  @@index([status, attemptedAt])
+}
+
+model EmergencyContact {
+  id                 String   @id @default(uuid()) @db.Uuid
+  userId             String   @db.Uuid
+  name               String   @db.VarChar(120)
+  phoneNumber        String   @db.VarChar(32)
+  relationship       String?  @db.VarChar(80)
+  priority           Int      @default(1)
+  verifiedAt         DateTime? @db.Timestamptz(3)
+  notifyOnSos        Boolean  @default(true)
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @db.Timestamptz(3)
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notifications      EmergencyNotification[]
+
+  @@index([userId, priority])
+}
+
+model EmergencyIncident {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @db.Uuid
+  type            EmergencyIncidentType
+  status          EmergencyIncidentStatus @default(SOS_ACTIVATED)
+  description     String?  @db.VarChar(1000)
+  latitude        Float
+  longitude       Float
+  accuracyMeters  Float?
+  locationLink    String?  @db.VarChar(500)
+  activatedAt     DateTime @default(now()) @db.Timestamptz(3)
+  resolvedAt      DateTime? @db.Timestamptz(3)
+  canceledAt      DateTime? @db.Timestamptz(3)
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notifications   EmergencyNotification[]
+  locationUpdates EmergencyLocationUpdate[]
+  acknowledgements EmergencyAcknowledgement[]
+
+  @@index([userId, activatedAt(sort: Desc)])
+  @@index([status, activatedAt])
+}
+
+model EmergencyNotification {
+  id              String   @id @default(uuid()) @db.Uuid
+  incidentId      String   @db.Uuid
+  contactId       String?  @db.Uuid
+  recipientUserId String?  @db.Uuid
+  status          EmergencyNotificationStatus @default(PENDING)
+  providerMessageId String? @db.VarChar(255)
+  error           String?  @db.Text
+  sentAt          DateTime? @db.Timestamptz(3)
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  incident        EmergencyIncident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  contact         EmergencyContact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  recipient       User?    @relation("EmergencyRecipient", fields: [recipientUserId], references: [id], onDelete: SetNull)
+
+  @@index([incidentId, createdAt])
+  @@index([recipientUserId, createdAt(sort: Desc)])
+}
+
+model EmergencyLocationUpdate {
+  id             String   @id @default(uuid()) @db.Uuid
+  incidentId     String   @db.Uuid
+  latitude       Float
+  longitude      Float
+  accuracyMeters Float?
+  recordedAt     DateTime @default(now()) @db.Timestamptz(3)
+  incident       EmergencyIncident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId, recordedAt(sort: Desc)])
+}
+
+model EmergencyAcknowledgement {
+  id          String   @id @default(uuid()) @db.Uuid
+  incidentId  String   @db.Uuid
+  userId      String   @db.Uuid
+  message     String?  @db.VarChar(500)
+  acknowledgedAt DateTime @default(now()) @db.Timestamptz(3)
+  incident    EmergencyIncident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([incidentId, userId])
+  @@index([userId, acknowledgedAt(sort: Desc)])
+}
