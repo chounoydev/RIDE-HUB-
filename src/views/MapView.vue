@@ -10,6 +10,7 @@ import { useWeatherStore } from '@/stores/weather'
 
 const destinationStorageKeyPrefix = 'ridehub.live-map.destination.v1'
 const mapLoadTimeoutMs = 45_000
+const navigationZoom = 17.5
 
 interface Place {
   id: string
@@ -416,6 +417,13 @@ function nearestRoutePosition(position: RiderPosition) {
   }
 
   return nearest
+}
+
+function navigationBearing(position: RiderPosition): number {
+  const routeBearing = nearestRoutePosition(position)?.bearing
+  return position.speed !== null && position.speed >= 1 && position.heading !== null
+    ? position.heading
+    : routeBearing ?? (is3D.value ? -12 : 0)
 }
 
 function remainingRouteCoordinates(): [number, number][] {
@@ -919,7 +927,6 @@ async function startNavigation() {
     if (map?.isStyleLoaded()) applyMapDimension(map)
     isNavigating.value = true
     updateRiderMarkerPresentation()
-    if (location.position) updateMapPosition(location.position)
   } catch (reason) {
     trackingError.value = reason instanceof Error
       ? reason.message
@@ -1023,9 +1030,11 @@ async function showMap(position: RiderPosition) {
         container,
         style: 'mapbox://styles/mapbox/streets-v12',
         center: [position.longitude, position.latitude],
-        zoom: 15.3,
-        pitch: is3D.value ? 60 : 0,
-        bearing: is3D.value ? -12 : 0,
+        zoom: isNavigating.value ? navigationZoom : 15.3,
+        pitch: is3D.value ? (isNavigating.value ? 64 : 60) : 0,
+        bearing: isNavigating.value
+          ? navigationBearing(position)
+          : is3D.value ? -12 : 0,
         attributionControl: true,
       })
       map = createdMap
@@ -1129,7 +1138,7 @@ async function showMap(position: RiderPosition) {
   }
 }
 
-function updateMapPosition(position: RiderPosition) {
+function updateMapPosition(position: RiderPosition, zoomForNavigation = false) {
   if (!map || !riderMarker) return
   const center: [number, number] = [position.longitude, position.latitude]
   riderMarker.setLngLat(center)
@@ -1137,15 +1146,11 @@ function updateMapPosition(position: RiderPosition) {
     resizeMap(map)
     return
   }
-  const routeBearing = nearestRoutePosition(position)?.bearing
-  const bearing = position.speed !== null && position.speed >= 1 && position.heading !== null
-    ? position.heading
-    : routeBearing ?? (is3D.value ? -12 : 0)
   map.easeTo({
     center,
-    zoom: map.getZoom(),
+    zoom: zoomForNavigation ? Math.max(map.getZoom(), navigationZoom) : map.getZoom(),
     pitch: is3D.value ? 64 : 0,
-    bearing,
+    bearing: navigationBearing(position),
     offset: [0, Math.round(map.getContainer().clientHeight * 0.17)],
     duration: 750,
   })
@@ -1203,15 +1208,16 @@ watch(isNavigating, (navigating) => {
   if (typeof document !== 'undefined') {
     document.body.classList.toggle('ridehub-navigating', navigating)
   }
-  if (!map?.isStyleLoaded()) return
-  for (const layer of ['ridehub-emergency-points', 'ridehub-emergency-symbols']) {
-    if (map.getLayer(layer)) {
-      map.setLayoutProperty(layer, 'visibility', navigating ? 'none' : 'visible')
+  if (map?.isStyleLoaded()) {
+    for (const layer of ['ridehub-emergency-points', 'ridehub-emergency-symbols']) {
+      if (map.getLayer(layer)) {
+        map.setLayoutProperty(layer, 'visibility', navigating ? 'none' : 'visible')
+      }
     }
   }
   if (navigating && location.position) {
     void nextTick(() => {
-      if (isNavigating.value && location.position) updateMapPosition(location.position)
+      if (isNavigating.value && location.position) updateMapPosition(location.position, true)
     })
   }
 })
