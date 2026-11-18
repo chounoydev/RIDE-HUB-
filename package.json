@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "run-p type-check server:type-check \"build-only {@}\" --",
+    "prebuild": "npm run prisma:generate",
     "build:android-web": "npm run type-check && npm run server:type-check && node scripts/build-android-web.mjs",
+    "prebuild:android-web": "npm run prisma:generate",
     "preview": "vite preview",
     "build-only": "vite build",
     "type-check": "vue-tsc --build",
@@ -14,6 +16,7 @@
     "server:start": "tsx server/index.ts",
     "server:type-check": "tsc -p tsconfig.server.json",
     "test:server": "tsx --test server/app.test.ts server/weather.test.ts",
+    "pretest:server": "npm run prisma:generate",
     "prisma:generate": "prisma generate",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "cap:sync": "cap sync",
