@@ -8,7 +8,7 @@ RideHub is an Android-first motorcycle community app built with Vue 3, Ionic Vue
 - Responsive RideHub marketing site with purpose/feature information and account entry points.
 - Website-only Neon Managed Auth signup, plus shared email/password sign-in and emailed-code password recovery on web and mobile, with mandatory email verification and password visibility controls.
 - Admin-only account portal backed by Neon’s authenticated Admin API; users cannot self-promote.
-- The website includes a direct download link and QR code for the signed Android APK; the iOS card remains unavailable until an official link is configured.
+- The website includes a direct download link and QR code for the signed Android APK; the iOS card is reserved for a TestFlight invitation and stays unavailable until a native iOS build is published.
 - Foreground GPS lookup and explicit live trip tracking after a user action; the last GPS fix is saved on-device per signed-in account and cleared at sign-out. Tracking stops when the map is left or the app is backgrounded. No location sharing or background GPS.
 - Live Map destination search or map-pin selection, with the selected destination saved on-device across refreshes; Mapbox provides driving-route geometry, distance, estimated duration, and route steps. The active route is drawn with a high-contrast outline above 3D buildings and remains visible as the map follows the rider.
 - Motorcycle-only rider marker labeled with the authenticated rider's name; the marker follows actual foreground GPS updates during an explicitly started trip and has no colored badge background.
@@ -47,7 +47,7 @@ The project includes a GitHub Actions workflow that runs the server tests and pr
 
 Set these Vercel environment variables before deploying:
 
-- Build/client: `VITE_MAPBOX_TOKEN` and `VITE_NEON_AUTH_URL`. Set the Auth URL to the Neon branch used by the deployment. `VITE_API_BASE_URL` is optional for the website (defaults to `/api`); Android defaults to the RideHub Vercel API. Set it to `https://<your-domain>/api` when building an APK for a different deployment. `VITE_ANDROID_DOWNLOAD_URL` and `VITE_IOS_DOWNLOAD_URL` are optional. Without an iOS store URL, the landing page's iOS QR code opens the RideHub website; it is not a native iOS app download. Set `VITE_IOS_DOWNLOAD_URL` to the published App Store or TestFlight URL when available.
+- Build/client: `VITE_MAPBOX_TOKEN` and `VITE_NEON_AUTH_URL`. Set the Auth URL to the Neon branch used by the deployment. `VITE_API_BASE_URL` is optional for the website (defaults to `/api`); Android defaults to the RideHub Vercel API. Set it to `https://<your-domain>/api` when building an APK for a different deployment. `VITE_ANDROID_DOWNLOAD_URL` and `VITE_IOS_DOWNLOAD_URL` are optional. Set `VITE_IOS_DOWNLOAD_URL` to the public TestFlight invitation URL after publishing; without it, the iOS card remains unavailable.
 - Server/runtime: `WEATHER_API_KEY`, `NEON_AUTH_BASE_URL`, `NEON_AUTH_JWKS_URL`, and the pooled Neon `DATABASE_URL` for shared communities. Add `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, and `AWS_REGION` only when enabling profile photo uploads.
 - Do not add secrets to `VITE_` variables. `DATABASE_URL_UNPOOLED` is only needed for database migrations; application requests use the pooled `DATABASE_URL`.
 
@@ -72,9 +72,22 @@ Neon pre-approves local `localhost` origins, but `127.0.0.1` is a different orig
 
 Email verification is enabled on the linked `ridehub-dev` branch. Test signup using an inbox you control and enter the code actually delivered by Neon Auth. The shared development mail provider is not a production mail-delivery guarantee; configure a dedicated SMTP provider and trusted production domain in Neon before launch. Users must not be assigned admin access by the signup flow. Provision administrators through Neon Console (Auth → Users → Make admin) and protect access to the console.
 
-The Android download card points to `/downloads/ridehub-android.apk` and downloads the signed APK bundled in `public/downloads`. `VITE_ANDROID_DOWNLOAD_URL` can override it with an HTTPS release URL. The iOS card remains “Coming soon” until a valid HTTPS URL is supplied with `VITE_IOS_DOWNLOAD_URL`. QR codes use the active download URL.
+The Android download card points to `/downloads/ridehub-android.apk` and downloads the signed APK bundled in `public/downloads`. `VITE_ANDROID_DOWNLOAD_URL` can override it with an HTTPS release URL. The iOS card remains “Coming soon” until a valid TestFlight invitation URL is supplied with `VITE_IOS_DOWNLOAD_URL`. QR codes use the active download URL.
 
 The admin portal currently supports **Neon admins only**. Neon Managed Auth on this branch does not expose a distinct least-privilege staff role, so do not grant full admin privileges to staff accounts unless they are meant to have all Managed Auth admin capabilities.
+
+## iOS / TestFlight
+
+The Capacitor iOS project is in `ios/App/App.xcodeproj` with bundle identifier `com.ridehub.app`. Building and signing an iOS release requires macOS with Xcode and an Apple Developer account. On the Mac:
+
+```sh
+npm install
+npm run build
+npx cap sync ios
+npx cap open ios
+```
+
+In Xcode, configure the App target's signing team, archive it, and upload the build to App Store Connect for TestFlight. After creating a public TestFlight invitation link, set `VITE_IOS_DOWNLOAD_URL` in Vercel and redeploy; the landing page will then show the TestFlight QR code and button. An Android APK cannot be installed on iPhone.
 
 ## Neon database
 

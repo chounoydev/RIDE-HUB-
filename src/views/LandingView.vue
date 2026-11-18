@@ -9,9 +9,7 @@ import { isNativeApp } from '@/services/auth'
 type StoreKey = 'android' | 'ios'
 type StoreLink = { key: StoreKey; name: string; url: string | null; invalid: boolean }
 
-const iosWebsiteUrl = 'https://ride-hub-alpha.vercel.app/'
 const configuredIosUrl = import.meta.env.VITE_IOS_DOWNLOAD_URL?.trim()
-const iosWebsiteFallback = !configuredIosUrl
 
 function storeLink(key: StoreKey, name: string, value?: string, allowSameOriginPath = false): StoreLink {
   const raw = value?.trim() ?? ''
@@ -34,6 +32,17 @@ function storeLink(key: StoreKey, name: string, value?: string, allowSameOriginP
   return { key, name, url: null, invalid: true }
 }
 
+function testFlightLink(value?: string): StoreLink {
+  const link = storeLink('ios', 'iOS', value)
+  if (!link.url) return link
+
+  const parsed = new URL(link.url)
+  if (parsed.hostname !== 'testflight.apple.com' || !parsed.pathname.startsWith('/join/')) {
+    return { ...link, url: null, invalid: true }
+  }
+  return link
+}
+
 const stores: StoreLink[] = [
   storeLink(
     'android',
@@ -41,7 +50,7 @@ const stores: StoreLink[] = [
     import.meta.env.VITE_ANDROID_DOWNLOAD_URL?.trim() || '/downloads/ridehub-android.apk',
     true,
   ),
-  storeLink('ios', 'iOS', configuredIosUrl || iosWebsiteUrl),
+  testFlightLink(configuredIosUrl),
 ]
 const qrCodes = ref<Partial<Record<StoreKey, string>>>({})
 const qrErrors = ref<Partial<Record<StoreKey, string>>>({})
@@ -211,20 +220,30 @@ onMounted(async () => {
                     <h3>{{ store.name }}</h3>
                   </div>
                   <span class="store-card__badge">
-                    {{ store.key === 'ios' && iosWebsiteFallback ? 'WEB APP' : store.url ? 'AVAILABLE' : 'COMING SOON' }}
+                    {{ store.key === 'ios' ? (store.url ? 'TESTFLIGHT' : 'COMING SOON') : store.url ? 'AVAILABLE' : 'COMING SOON' }}
                   </span>
                 </div>
                 <div v-if="store.url" class="store-card__qr">
                   <img
                     v-if="qrCodes[store.key]"
                     :src="qrCodes[store.key]"
-                    :alt="store.key === 'ios' && iosWebsiteFallback ? 'Open RideHub on iPhone QR code' : `${store.name} download QR code`"
+                    :alt="store.key === 'ios' ? 'RideHub TestFlight invitation QR code' : `${store.name} download QR code`"
                   />
                   <span v-else-if="qrErrors[store.key]" role="alert">{{ qrErrors[store.key] }}</span>
                   <span v-else class="qr-placeholder">Preparing secure download QR…</span>
                 </div>
                 <div v-else class="store-card__qr store-card__qr--empty">
-                  <span>{{ store.invalid ? 'A valid HTTPS store link is required.' : 'The official store link will appear here when the app is published.' }}</span>
+                  <span>
+                    {{
+                      store.invalid
+                        ? store.key === 'ios'
+                          ? 'A valid TestFlight invitation URL is required.'
+                          : 'A valid HTTPS download link is required.'
+                        : store.key === 'ios'
+                          ? 'The TestFlight invitation will appear here after the iOS app is published.'
+                          : 'The official store link will appear here when the app is published.'
+                    }}
+                  </span>
                 </div>
                 <a
                   v-if="store.url"
@@ -234,19 +253,20 @@ onMounted(async () => {
                   :target="store.key === 'ios' ? '_blank' : undefined"
                   :rel="store.key === 'ios' ? 'noopener noreferrer' : undefined"
                 >
-                  {{
-                    store.key === 'android'
-                      ? 'Download Android APK'
-                      : iosWebsiteFallback
-                        ? 'Open RideHub on iPhone'
-                        : `Open ${store.name} download`
-                  }}
+                  {{ store.key === 'android' ? 'Download Android APK' : 'Join on TestFlight' }}
                   <ion-icon :icon="arrowForwardOutline" />
                 </a>
-                <p v-if="store.key === 'ios' && iosWebsiteFallback" class="store-card__note">
-                  Open in Safari and choose Share &gt; Add to Home Screen for a shortcut. A native iOS app is not published yet.
-                </p>
-                <span v-else-if="!store.url" class="store-card__disabled">Official download link not published yet</span>
+                <span v-else class="store-card__disabled">
+                  {{
+                    store.invalid
+                      ? store.key === 'ios'
+                        ? 'Set a valid TestFlight invitation link.'
+                        : 'Check the configured HTTPS download link.'
+                      : store.key === 'ios'
+                        ? 'TestFlight release not published yet'
+                        : 'Official download link not published yet'
+                  }}
+                </span>
               </article>
             </div>
           </section>
@@ -874,13 +894,6 @@ p {
   color: #778389;
   font-size: 9px;
   text-align: center;
-}
-
-.store-card__note {
-  margin: 8px 0 0;
-  color: #8d999e;
-  font-size: 9px;
-  line-height: 1.5;
 }
 
 .site-footer {
