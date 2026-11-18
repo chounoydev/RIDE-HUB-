@@ -47,7 +47,7 @@ The project includes a GitHub Actions workflow that runs the server tests and pr
 
 Set these Vercel environment variables before deploying:
 
-- Build/client: `VITE_MAPBOX_TOKEN` and `VITE_NEON_AUTH_URL`. Set the Auth URL to the Neon branch used by the deployment. `VITE_API_BASE_URL` is optional for the website (defaults to `/api`); Android defaults to the RideHub Vercel API. Set it to `https://<your-domain>/api` when building an APK for a different deployment. `VITE_ANDROID_DOWNLOAD_URL` and `VITE_IOS_DOWNLOAD_URL` are optional.
+- Build/client: `VITE_MAPBOX_TOKEN` and `VITE_NEON_AUTH_URL`. Set the Auth URL to the Neon branch used by the deployment. `VITE_API_BASE_URL` is optional for the website (defaults to `/api`); Android defaults to the RideHub Vercel API. Set it to `https://<your-domain>/api` when building an APK for a different deployment. `VITE_ANDROID_DOWNLOAD_URL` and `VITE_IOS_DOWNLOAD_URL` are optional. Without an iOS store URL, the landing page's iOS QR code opens the RideHub website; it is not a native iOS app download. Set `VITE_IOS_DOWNLOAD_URL` to the published App Store or TestFlight URL when available.
 - Server/runtime: `WEATHER_API_KEY`, `NEON_AUTH_BASE_URL`, `NEON_AUTH_JWKS_URL`, and the pooled Neon `DATABASE_URL` for shared communities. Add `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, and `AWS_REGION` only when enabling profile photo uploads.
 - Do not add secrets to `VITE_` variables. `DATABASE_URL_UNPOOLED` is only needed for database migrations; application requests use the pooled `DATABASE_URL`.
 

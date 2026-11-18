@@ -9,6 +9,10 @@ import { isNativeApp } from '@/services/auth'
 type StoreKey = 'android' | 'ios'
 type StoreLink = { key: StoreKey; name: string; url: string | null; invalid: boolean }
 
+const iosWebsiteUrl = 'https://ride-hub-alpha.vercel.app/'
+const configuredIosUrl = import.meta.env.VITE_IOS_DOWNLOAD_URL?.trim()
+const iosWebsiteFallback = !configuredIosUrl
+
 function storeLink(key: StoreKey, name: string, value?: string, allowSameOriginPath = false): StoreLink {
   const raw = value?.trim() ?? ''
   if (!raw) return { key, name, url: null, invalid: false }
@@ -37,7 +41,7 @@ const stores: StoreLink[] = [
     import.meta.env.VITE_ANDROID_DOWNLOAD_URL?.trim() || '/downloads/ridehub-android.apk',
     true,
   ),
-  storeLink('ios', 'iOS', import.meta.env.VITE_IOS_DOWNLOAD_URL),
+  storeLink('ios', 'iOS', configuredIosUrl || iosWebsiteUrl),
 ]
 const qrCodes = ref<Partial<Record<StoreKey, string>>>({})
 const qrErrors = ref<Partial<Record<StoreKey, string>>>({})
@@ -206,10 +210,16 @@ onMounted(async () => {
                     <span class="section-kicker">RIDEHUB FOR</span>
                     <h3>{{ store.name }}</h3>
                   </div>
-                  <span class="store-card__badge">{{ store.url ? 'AVAILABLE' : 'COMING SOON' }}</span>
+                  <span class="store-card__badge">
+                    {{ store.key === 'ios' && iosWebsiteFallback ? 'WEB APP' : store.url ? 'AVAILABLE' : 'COMING SOON' }}
+                  </span>
                 </div>
                 <div v-if="store.url" class="store-card__qr">
-                  <img v-if="qrCodes[store.key]" :src="qrCodes[store.key]" :alt="`${store.name} download QR code`" />
+                  <img
+                    v-if="qrCodes[store.key]"
+                    :src="qrCodes[store.key]"
+                    :alt="store.key === 'ios' && iosWebsiteFallback ? 'Open RideHub on iPhone QR code' : `${store.name} download QR code`"
+                  />
                   <span v-else-if="qrErrors[store.key]" role="alert">{{ qrErrors[store.key] }}</span>
                   <span v-else class="qr-placeholder">Preparing secure download QR…</span>
                 </div>
@@ -224,10 +234,19 @@ onMounted(async () => {
                   :target="store.key === 'ios' ? '_blank' : undefined"
                   :rel="store.key === 'ios' ? 'noopener noreferrer' : undefined"
                 >
-                  {{ store.key === 'android' ? 'Download Android APK' : `Open ${store.name} download` }}
+                  {{
+                    store.key === 'android'
+                      ? 'Download Android APK'
+                      : iosWebsiteFallback
+                        ? 'Open RideHub on iPhone'
+                        : `Open ${store.name} download`
+                  }}
                   <ion-icon :icon="arrowForwardOutline" />
                 </a>
-                <span v-else class="store-card__disabled">Official download link not published yet</span>
+                <p v-if="store.key === 'ios' && iosWebsiteFallback" class="store-card__note">
+                  Open in Safari and choose Share &gt; Add to Home Screen for a shortcut. A native iOS app is not published yet.
+                </p>
+                <span v-else-if="!store.url" class="store-card__disabled">Official download link not published yet</span>
               </article>
             </div>
           </section>
@@ -855,6 +874,13 @@ p {
   color: #778389;
   font-size: 9px;
   text-align: center;
+}
+
+.store-card__note {
+  margin: 8px 0 0;
+  color: #8d999e;
+  font-size: 9px;
+  line-height: 1.5;
 }
 
 .site-footer {
